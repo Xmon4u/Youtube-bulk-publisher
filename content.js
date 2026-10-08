@@ -581,94 +581,288 @@
   // ============================================================
   // UPLOAD VIDEOS TO YOUTUBE
   // ============================================================
-  async function uploadBatchToYouTube(batchFiles) {
-    // Navigate to upload page if not already there
-    const uploadUrl = 'https://studio.youtube.com/channel/';
-    
-    // Try to find the upload button on the YouTube Studio page
-    // YouTube Studio has an upload button in the top bar
-    const uploadButton = await findUploadButton();
-    
-    if (!uploadButton) {
-      throw new Error('Could not find the upload button on YouTube Studio');
+  // Helper: Open YouTube Studio Upload Dialog (handles direct icon and CREATE menu)
+  async function openYouTubeUploadDialog() {
+    // 1. Is dialog already open and visible?
+    const existingDialog = deepQuery('ytcp-uploads-dialog, [dialog-type="UPLOADS"]');
+    if (existingDialog && isElementVisible(existingDialog)) {
+      console.log('[XMON] Upload dialog is already open.');
+      return true;
     }
-    
-    // Click the upload button to open upload dialog
-    clickElement(uploadButton);
-    await sleep(1500);
-    
-    // Wait for the upload dialog / file input
-    const fileInput = await waitFor(() => {
-      // YouTube Studio uses a file input element
-      const inputs = document.querySelectorAll('input[type="file"]');
-      for (const input of inputs) {
-        if (input.accept && input.accept.includes('video')) return input;
+
+    // 2. Try direct upload button / icon on the page
+    const directUploadBtn = deepQuery('#upload-icon, [aria-label="Upload videos"], ytcp-button#upload-button, ytcp-icon-button#upload-button');
+    if (directUploadBtn && isElementVisible(directUploadBtn)) {
+      console.log('[XMON] Clicking direct upload icon...');
+      clickElement(directUploadBtn);
+      const dialog = await waitFor(() => {
+        const d = deepQuery('ytcp-uploads-dialog');
+        return (d && isElementVisible(d)) ? d : null;
+      }, 4000);
+      if (dialog) return true;
+    }
+
+    // 3. Try "CREATE" button in header (and click "Upload videos" in the popup menu)
+    const createBtn = deepQuery('#create-icon, #create-button, [aria-label="Create"]');
+    if (createBtn && isElementVisible(createBtn)) {
+      console.log('[XMON] Clicking CREATE button in header...');
+      clickElement(createBtn);
+      await sleep(600);
+
+      // Look for the "Upload videos" item in the opened dropdown menu
+      const uploadItem = await waitFor(() => {
+        const item = deepQuery('[test-id="upload-action"], tp-yt-paper-item[test-id="upload-action"]');
+        if (item && isElementVisible(item)) return item;
+
+        const items = deepQueryAll('tp-yt-paper-item, ytcp-text-menu-item, paper-item');
+        for (const it of items) {
+          const t = (it.textContent || '').toLowerCase();
+          if (t.includes('upload') && isElementVisible(it)) return it;
+        }
+        return null;
+      }, 3500);
+
+      if (uploadItem) {
+        console.log('[XMON] Clicking "Upload videos" dropdown item...');
+        clickElement(uploadItem);
+        const dialog = await waitFor(() => {
+          const d = deepQuery('ytcp-uploads-dialog');
+          return (d && isElementVisible(d)) ? d : null;
+        }, 5000);
+        if (dialog) return true;
       }
-      // Also check shadow DOM
-      const deepInput = deepQuery('input[type="file"][accept*="video"]');
-      if (deepInput) return deepInput;
-      // Fallback: any visible file input
-      return inputs.length > 0 ? inputs[inputs.length - 1] : null;
-    }, 10000);
-    
-    if (!fileInput) {
-      throw new Error('Upload dialog file input not found');
     }
-    
-    // Create a DataTransfer to set files on the input
+
+    // 4. Final verification if dialog appeared
+    const dialog = await waitFor(() => {
+      const d = deepQuery('ytcp-uploads-dialog');
+      return (d && isElementVisible(d)) ? d : null;
+    }, 4000);
+
+    return !!dialog;
+  }
+
+  // Helper: Locate YouTube Studio's REAL file input element (strictly excluding XMON internal input)
+  function findYouTubeUploadInput() {
+    // 1. Check inside ytcp-uploads-dialog
+    const dialog = deepQuery('ytcp-uploads-dialog, [dialog-type="UPLOADS"]');
+    if (dialog) {
+      const inp = deepQuery('input[type="file"]:not([data-xmon-internal])', dialog);
+      if (inp && inp.id !== 'xmon-file-input') return inp;
+    }
+
+    // 2. Check inside ytcp-upload-drop-target
+    const dropTarget = deepQuery('ytcp-upload-drop-target, #drop-target');
+    if (dropTarget) {
+      const inp = deepQuery('input[type="file"]:not([data-xmon-internal])', dropTarget);
+      if (inp && inp.id !== 'xmon-file-input') return inp;
+    }
+
+    // 3. Check for #file-loader specifically
+    const loader = deepQuery('#file-loader, input[type="file"].input');
+    if (loader && loader.id !== 'xmon-file-input' && !loader.hasAttribute('data-xmon-internal')) {
+      return loader;
+    }
+
+    // 4. Scan all file inputs excluding XMON
+    const all = deepQueryAll('input[type="file"]');
+    for (const input of all) {
+      if (input.id === 'xmon-file-input' || input.hasAttribute('data-xmon-internal') || input.closest('#xmon-widget')) {
+        continue;
+      }
+      return input;
+    }
+    return null;
+  }
+
+  // Upload a batch of files to YouTube Studio
+  async function uploadBatchToYouTube(batchFiles) {
+    if (!batchFiles || batchFiles.length === 0) {
+      throw new Error('No files provided in batch');
+    }
+
+    console.log(`[XMON] Preparing upload batch of ${batchFiles.length} video(s)...`);
+
+    // Step 1: Open YouTube Studio Upload Dialog
+    const isDialogOpen = await openYouTubeUploadDialog();
+    if (!isDialogOpen) {
+      throw new Error('Could not open YouTube Studio upload dialog. Please check if you are logged into YouTube Studio.');
+    }
+
+    await sleep(800);
+
+    // Step 2: Locate YouTube Studio's REAL file input
+    const ytFileInput = await waitFor(() => findYouTubeUploadInput(), 8000);
+
+    // Step 3: Locate YouTube Studio's drop target element
+    const dropTarget = await waitFor(() => {
+      const dt = deepQuery('ytcp-upload-drop-target, #drop-target');
+      if (dt && isElementVisible(dt)) return dt;
+      return deepQuery('ytcp-uploads-dialog');
+    }, 4000);
+
+    if (!ytFileInput && !dropTarget) {
+      throw new Error('Could not find YouTube upload input or drop target element.');
+    }
+
+    // Step 4: Populate DataTransfer
     const dt = new DataTransfer();
     for (const file of batchFiles) {
       dt.items.add(file);
     }
-    
-    fileInput.files = dt.files;
-    
-    // Dispatch change event to trigger YouTube's upload handler
-    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-    
-    await sleep(2000);
-    
-    return true;
-  }
-  
-  async function findUploadButton() {
-    // Method 1: Direct button with upload icon
-    let btn = deepQuery('#upload-icon, #create-icon, [aria-label="Upload videos"], [aria-label="Create"]');
-    if (btn && isElementVisible(btn)) return btn;
-    
-    // Method 2: ytcp-button with upload text
-    const buttons = deepQueryAll('ytcp-button, button');
-    for (const b of buttons) {
-      const text = (b.textContent || '').trim().toLowerCase();
-      const label = (b.getAttribute('aria-label') || '').toLowerCase();
-      if (text.includes('upload') || label.includes('upload') || text.includes('create') || label.includes('create')) {
-        if (isElementVisible(b)) return b;
+
+    // Step 5: Inject files — use multiple robust methods
+    let dispatched = false;
+
+    // Method A: Native setter via Object.getOwnPropertyDescriptor (most reliable for Shadow DOM inputs)
+    if (ytFileInput) {
+      try {
+        // Try native input value setter (bypasses read-only restriction)
+        const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
+        if (nativeInputSetter && nativeInputSetter.set) {
+          nativeInputSetter.set.call(ytFileInput, dt.files);
+        } else {
+          // Fallback: direct assignment
+          ytFileInput.files = dt.files;
+        }
+        ytFileInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        ytFileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        dispatched = true;
+        console.log('[XMON] Injected files via native setter into YouTube file input');
+      } catch (err) {
+        console.warn('[XMON] File input native setter error:', err);
+        // Fallback: direct assignment
+        try {
+          ytFileInput.files = dt.files;
+          ytFileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+          dispatched = true;
+        } catch (e2) {
+          console.warn('[XMON] File input direct assignment also failed:', e2);
+        }
       }
     }
-    
-    // Method 3: The "CREATE" button in top bar
-    btn = deepQuery('#create-button, #upload-button');
-    if (btn && isElementVisible(btn)) return btn;
-    
-    return null;
+
+    // Method B: DragEvent drop on the drop target element
+    const targetElement = dropTarget || deepQuery('ytcp-uploads-dialog');
+    if (targetElement) {
+      try {
+        const dragInit = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          dataTransfer: dt
+        };
+        targetElement.dispatchEvent(new DragEvent('dragenter', dragInit));
+        await sleep(100);
+        targetElement.dispatchEvent(new DragEvent('dragover', dragInit));
+        await sleep(100);
+        targetElement.dispatchEvent(new DragEvent('drop', dragInit));
+        dispatched = true;
+        console.log('[XMON] Dispatched drop event onto YouTube drop target');
+      } catch (err) {
+        console.warn('[XMON] Drop event error:', err);
+      }
+    }
+
+    if (!dispatched) {
+      throw new Error('Failed to dispatch files to YouTube Studio');
+    }
+
+    await sleep(500);
+
+    // Step 6: Verify YouTube Studio accepted the files (with retry)
+    let uploadStarted = await waitFor(() => {
+      // Multi-file list items appeared
+      const items = deepQueryAll('ytcp-uploads-file-item, .upload-item');
+      if (items.length > 0) return true;
+
+      // Single file editor stepper appeared
+      const stepper = deepQuery('#step-badge-0, #title-textarea, #next-button');
+      if (stepper && isElementVisible(stepper)) return true;
+
+      // Drop target disappeared => files accepted
+      const dropzone = deepQuery('ytcp-upload-drop-target');
+      const dialog = deepQuery('ytcp-uploads-dialog');
+      if (dialog && isElementVisible(dialog) && dropzone && !isElementVisible(dropzone)) return true;
+
+      // Progress elements appeared
+      const progress = deepQuery('ytcp-video-upload-progress, tp-yt-paper-progress, [class*="progress-label"], [class*="upload-progress"]');
+      if (progress && isElementVisible(progress)) return true;
+
+      // Detect upload error (also means YouTube reacted)
+      const err = detectYouTubeUploadError();
+      if (err) return true;
+
+      return false;
+    }, 10000);
+
+    // Retry injection if YouTube Studio did not react
+    if (!uploadStarted) {
+      console.warn('[XMON] YouTube did not react. Retrying file injection...');
+
+      // Re-find input (may have re-rendered)
+      const freshInput = await waitFor(() => findYouTubeUploadInput(), 3000);
+      if (freshInput) {
+        try {
+          const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
+          if (nativeInputSetter && nativeInputSetter.set) {
+            nativeInputSetter.set.call(freshInput, dt.files);
+          } else {
+            freshInput.files = dt.files;
+          }
+          freshInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+          freshInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+          console.log('[XMON] Retry injection sent.');
+        } catch (retryErr) {
+          console.warn('[XMON] Retry injection failed:', retryErr);
+        }
+      }
+
+      // Also retry drop event
+      if (targetElement) {
+        try {
+          const dragInit = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt };
+          targetElement.dispatchEvent(new DragEvent('drop', dragInit));
+        } catch (e) {}
+      }
+
+      await sleep(2000);
+
+      // Final check after retry
+      uploadStarted = await waitFor(() => {
+        const items = deepQueryAll('ytcp-uploads-file-item, .upload-item');
+        if (items.length > 0) return true;
+        const stepper = deepQuery('#step-badge-0, #title-textarea, #next-button');
+        if (stepper && isElementVisible(stepper)) return true;
+        const progress = deepQuery('ytcp-video-upload-progress, tp-yt-paper-progress');
+        if (progress && isElementVisible(progress)) return true;
+        return false;
+      }, 5000);
+
+      if (!uploadStarted) {
+        console.warn('[XMON] Upload still did not start after retry. Continuing anyway...');
+      }
+    }
+
+    return true;
   }
-  
-  // Wait for all videos in batch to finish uploading on YouTube
-  async function waitForBatchUploadComplete(batchCount) {
-    updateStatus(`Waiting for ${batchCount} videos to upload...`, 'active');
+
+  // Wait for all videos in batch to finish uploading on YouTube with live per-video tracking
+  async function waitForBatchUploadComplete(batchCount, currentBatchVideos = []) {
+    updateStatus(`Uploading ${batchCount} video(s) to YouTube...`, 'active');
     
-    // YouTube shows progress for each video - we need to wait until all are done
-    // This monitors the upload dialog for completion indicators
-    const maxWaitMs = batchCount * 120000; // 2 minutes per video max
+    // 2.5 minutes per video max (minimum 3 minutes)
+    const maxWaitMs = Math.max(batchCount * 90000, 180000);
     const start = Date.now();
-    
+    let consecutiveDoneCount = 0;
+
     while (Date.now() - start < maxWaitMs) {
       if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
       if (state.isPaused) {
         await waitForResume();
       }
-      
-      // Real-time check for YouTube Studio upload errors & daily limits
+
+      // 1. Real-time check for YouTube Studio upload errors & daily limits
       const detectedError = detectYouTubeUploadError();
       if (detectedError) {
         console.warn('[XMON] Upload error detected:', detectedError);
@@ -694,60 +888,125 @@
           });
         }
       }
-      
-      // Check for upload completion indicators
-      const progressBars = deepQueryAll('ytcp-video-upload-progress, .upload-progress');
-      const uploadRows = deepQueryAll('.upload-item, ytcp-uploads-file-item, [class*="upload"]');
-      
-      // Check if all uploads show as complete
-      let allComplete = false;
-      
-      // Method 1: Check for "Processing" or "Checks complete" text
-      const statusTexts = deepQueryAll('.progress-label, .status-text, [class*="status"]');
-      let completedCount = 0;
-      for (const st of statusTexts) {
-        const text = (st.textContent || '').toLowerCase();
-        if (text.includes('processing') || text.includes('complete') || text.includes('published') || text.includes('draft') || text.includes('uploading complete')) {
-          completedCount++;
+
+      // 2. Live tracking of multi-file items (ytcp-uploads-file-item)
+      const fileItems = deepQueryAll('ytcp-uploads-file-item');
+      let completedInDom = 0;
+
+      if (fileItems.length > 0) {
+        fileItems.forEach((item, idx) => {
+          const itemText = (item.textContent || '').toLowerCase();
+          const isDone = itemText.includes('complete') ||
+                         itemText.includes('saved as draft') ||
+                         itemText.includes('processing') ||
+                         itemText.includes('checks complete') ||
+                         itemText.includes('100%');
+          const isFailed = itemText.includes('abandoned') ||
+                           itemText.includes('upload failed') ||
+                           itemText.includes('error');
+
+          if (isDone) completedInDom++;
+
+          // Match item to currentBatchVideos and update status in real time
+          if (currentBatchVideos && currentBatchVideos[idx]) {
+            const video = currentBatchVideos[idx];
+            if (isDone && video.status === STATUS.UPLOADING) {
+              video.status = STATUS.UPLOADED;
+              state.uploadedCount++;
+              state.processedIds.add(video.id);
+              renderUI();
+            } else if (isFailed && video.status === STATUS.UPLOADING) {
+              video.status = STATUS.FAILED;
+              video.error = 'YouTube upload failed';
+              state.failedCount++;
+              renderUI();
+            }
+          }
+        });
+      }
+
+      // 3. Single-file upload handling (most common path)
+      if (batchCount === 1 || fileItems.length === 0) {
+        const dialog = deepQuery('ytcp-uploads-dialog');
+        const dialogText = (dialog?.textContent || '').toLowerCase();
+        const isDraftSaved = dialogText.includes('saved as draft') ||
+                             dialogText.includes('checks complete') ||
+                             dialogText.includes('processing') ||
+                             dialogText.includes('uploaded') ||
+                             dialogText.includes('video published') ||
+                             dialogText.includes('upload complete');
+        if (isDraftSaved && currentBatchVideos.length > 0) {
+          const video = currentBatchVideos[0];
+          if (video && video.status === STATUS.UPLOADING) {
+            video.status = STATUS.UPLOADED;
+            state.uploadedCount++;
+            state.processedIds.add(video.id);
+            renderUI();
+          }
+          completedInDom = Math.max(completedInDom, 1);
         }
       }
-      
-      if (completedCount >= batchCount) {
-        allComplete = true;
-      }
-      
-      // Method 2: Check for upload dialog close/save button being enabled
-      const closeOrSave = deepQuery('#close-button:not([disabled]), #save-button:not([disabled])');
-      
-      // Method 3: Check percentage indicators  
-      const percentTexts = deepQueryAll('[class*="percent"], .progress-text');
-      let allAt100 = percentTexts.length >= batchCount;
-      for (const pt of percentTexts) {
-        if (!pt.textContent.includes('100')) {
-          allAt100 = false;
-          break;
+
+      // 4. Check if all items in batch are completed
+      const allVideosProcessed = currentBatchVideos.length > 0 &&
+        currentBatchVideos.every(v => v.status === STATUS.UPLOADED || v.status === STATUS.FAILED);
+
+      // Check for an enabled Close button (signals all uploads done)
+      const closeOrDoneBtn = deepQuery([
+        'ytcp-uploads-dialog #close-button:not([disabled])',
+        'ytcp-multi-file-upload-dialog #close-button:not([disabled])',
+        'ytcp-uploads-dialog ytcp-button[id="close-button"]:not([disabled])'
+      ].join(', '));
+      const isCloseReady = closeOrDoneBtn && isElementVisible(closeOrDoneBtn) &&
+        !closeOrDoneBtn.hasAttribute('disabled') &&
+        closeOrDoneBtn.getAttribute('aria-disabled') !== 'true';
+
+      if (allVideosProcessed || (completedInDom >= batchCount) || (isCloseReady && completedInDom > 0)) {
+        consecutiveDoneCount++;
+        if (consecutiveDoneCount >= 2) { // Verify across 2 ticks for stability
+          updateStatus('Batch upload complete. Saved as drafts.', 'active');
+          await sleep(1500);
+
+          // Close upload dialog cleanly
+          const closeBtn = deepQuery([
+            'ytcp-uploads-dialog #close-button',
+            'ytcp-multi-file-upload-dialog #close-button',
+            'ytcp-uploads-dialog ytcp-button[id="close-button"]'
+          ].join(', '));
+          if (closeBtn && isElementVisible(closeBtn)) {
+            clickElement(closeBtn);
+            await sleep(1000);
+          }
+
+          // If YouTube presents "Save as draft" confirmation
+          await sleep(500);
+          const confirmBtn = deepQuery('ytcp-confirmation-dialog #confirm-button, [aria-label="Save as draft"]');
+          if (confirmBtn && isElementVisible(confirmBtn)) {
+            clickElement(confirmBtn);
+            await sleep(800);
+          }
+
+          return true;
         }
+      } else {
+        consecutiveDoneCount = 0;
       }
-      
-      if (allComplete || allAt100) {
-        updateStatus('Batch upload complete. Processing...', 'active');
-        await sleep(3000); // Give YouTube time to process
-        
-        // Close the upload dialog if it's still open
-        const closeBtn = deepQuery('#close-button, [aria-label="Close"]');
-        if (closeBtn && isElementVisible(closeBtn) && isButtonEnabled(closeBtn)) {
-          clickElement(closeBtn);
-          await sleep(1000);
-        }
-        
-        return true;
-      }
-      
-      await sleep(2500); // Check every 2.5 seconds
+
+      await sleep(2000);
     }
-    
-    // Timeout - but don't fail completely, some videos may have uploaded
+
     console.warn('[XMON] Batch upload wait timed out');
+    // Even on timeout, try to close dialog gracefully
+    const timeoutCloseBtn = deepQuery('ytcp-uploads-dialog #close-button, [aria-label="Close"]');
+    if (timeoutCloseBtn && isElementVisible(timeoutCloseBtn)) {
+      clickElement(timeoutCloseBtn);
+      await sleep(800);
+      const confirmBtn = deepQuery('ytcp-confirmation-dialog #confirm-button, [aria-label="Save as draft"]');
+      if (confirmBtn && isElementVisible(confirmBtn)) {
+        clickElement(confirmBtn);
+        await sleep(600);
+      }
+    }
     return false;
   }
   
@@ -818,10 +1077,10 @@
           if (batchFiles.length > 0) {
             await uploadBatchToYouTube(batchFiles);
             
-            // Wait for upload completion
-            const uploadSuccess = await waitForBatchUploadComplete(batchFiles.length);
+            // Wait for upload completion — pass currentBatchVideos for real-time status tracking
+            const uploadSuccess = await waitForBatchUploadComplete(batchFiles.length, currentBatchVideos);
             
-            // Mark as uploaded
+            // Mark any still-uploading videos based on final result
             for (const video of currentBatchVideos) {
               if (video.status === STATUS.UPLOADING) {
                 video.status = uploadSuccess ? STATUS.UPLOADED : STATUS.FAILED;
@@ -833,6 +1092,13 @@
                   video.error = 'Upload timed out';
                 }
               }
+            }
+          } else {
+            console.warn('[XMON] Batch has no uploadable files (files may be missing).');
+            for (const video of currentBatchVideos) {
+              video.status = STATUS.FAILED;
+              video.error = 'File not available for upload (file reference lost)';
+              state.failedCount++;
             }
           }
           
@@ -949,7 +1215,8 @@
   // ============================================================
   async function publishAllDrafts() {
     let publishRound = 0;
-    const maxRounds = 5; // Prevent infinite loops
+    const maxRounds = 50; // Allow up to 50 individual draft publishes per run
+    let consecutiveEmpty = 0;
     
     while (!state.stopRequested && publishRound < maxRounds) {
       if (state.isPaused) {
@@ -961,30 +1228,38 @@
       if (drafts.length === 0) {
         // Auto scroll to find more
         if (state.config.autoScroll) {
-          window.scrollBy(0, 1000);
+          window.scrollBy(0, 800);
           await sleep(2000);
           const moreDrafts = findDraftRows();
-          if (moreDrafts.length === 0) break;
+          if (moreDrafts.length === 0) {
+            consecutiveEmpty++;
+            if (consecutiveEmpty >= 2) break; // No more drafts after 2 scroll attempts
+          } else {
+            consecutiveEmpty = 0;
+          }
         } else {
           break;
         }
+        continue;
       }
       
+      consecutiveEmpty = 0;
       const currentDraft = drafts[0];
       if (!currentDraft) break;
       
-      const idx = state.publishedCount + 1;
-      const total = drafts.length + state.publishedCount;
+      const idx = publishRound + 1;
+      const total = drafts.length + publishRound;
       
       try {
         await publishSingleDraft(currentDraft, idx, total);
-        updateStatus(`Published: ${currentDraft.title.substring(0, 30)}`, 'active');
+        state.publishedCount++;
+        updateStatus(`Published (${state.publishedCount}): ${currentDraft.title.substring(0, 30)}`, 'active');
         
         // Update queue items that match
         for (const qItem of state.queue) {
           if (qItem.status === STATUS.UPLOADED || qItem.status === STATUS.DRAFT) {
-            // Try to match by name
-            if (currentDraft.title.includes(qItem.name.replace(/\.[^/.]+$/, '').substring(0, 20))) {
+            const qName = qItem.name.replace(/\.[^/.]+$/, '').substring(0, 20);
+            if (currentDraft.title.includes(qName) || qName.includes(currentDraft.title.substring(0, 20))) {
               qItem.status = STATUS.PUBLISHED;
               break;
             }
@@ -1004,7 +1279,6 @@
       
       await sleep(state.config.delayBetweenVideos);
       publishRound++;
-      if (drafts.length > 1) publishRound = 0; // Reset if more drafts found
     }
   }
   
@@ -1036,23 +1310,30 @@
   // ============================================================
   async function navigateToContent() {
     const currentUrl = window.location.href;
-    if (currentUrl.includes('/videos')) return; // Already on content page
+    // Already on the videos/content page
+    if (currentUrl.includes('/videos') || currentUrl.includes('/content')) return;
     
-    // Try clicking the "Content" menu item
-    const menuItems = deepQueryAll('a, [role="tab"], tp-yt-paper-tab');
+    // Try clicking the "Content" menu item in the sidebar
+    const menuItems = deepQueryAll('a[href], [role="tab"], tp-yt-paper-tab');
     for (const item of menuItems) {
-      if (/^content$/i.test((item.textContent || '').trim())) {
+      const href = item.getAttribute('href') || '';
+      const text = (item.textContent || '').trim();
+      if (/^content$/i.test(text) || href.includes('/videos')) {
         clickElement(item);
-        await sleep(2000);
+        await sleep(2500);
         return;
       }
     }
     
-    // Fallback: navigate via URL
-    const channelMatch = window.location.href.match(/\/channel\/([^/]+)/);
+    // Fallback: navigate via URL directly
+    const channelMatch = window.location.href.match(/\/channel\/([^/?#]+)/);
     if (channelMatch) {
-      window.location.href = `https://studio.youtube.com/channel/${channelMatch[1]}/videos/upload`;
-      await sleep(4000);
+      window.location.href = `https://studio.youtube.com/channel/${channelMatch[1]}/videos`;
+      await sleep(5000);
+    } else {
+      // Last resort: try the generic videos URL pattern
+      window.location.href = 'https://studio.youtube.com/videos';
+      await sleep(5000);
     }
   }
 
@@ -1060,11 +1341,29 @@
   // HELPER: Close stuck dialogs
   // ============================================================
   async function closeStuckDialogs() {
+    // Only close dialogs that are clearly stuck (not the active upload dialog during upload)
+    if (state.isRunning) {
+      // During upload: only close share/video-share dialogs, NOT the main upload dialog
+      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
+      if (shareClose && isElementVisible(shareClose)) {
+        clickElement(shareClose);
+        await sleep(400);
+      }
+      // Close error dialogs
+      const errorClose = deepQuery('ytcp-alert-dialog #cancel-button, ytcp-alert-dialog [aria-label="Cancel"]');
+      if (errorClose && isElementVisible(errorClose)) {
+        clickElement(errorClose);
+        await sleep(400);
+      }
+      return;
+    }
+
+    // When not running: close any lingering dialogs
     const closeSelectors = [
-      '#close-button',
+      'ytcp-video-share-dialog #close-button',
+      'ytcp-uploads-dialog #close-button',
       '[aria-label="Close"]',
-      'ytcp-button#close-button',
-      'ytcp-video-share-dialog #close-button'
+      'ytcp-button#close-button'
     ];
     
     for (const sel of closeSelectors) {
@@ -1429,7 +1728,7 @@
       <!-- Footer -->
       <div class="xmon-footer">
         <span class="xmon-footer-text">XMON Systems</span>
-        <span class="xmon-footer-version">v2.0.0</span>
+        <span class="xmon-footer-version">v2.1.0</span>
       </div>
     `;
   }
@@ -1717,10 +2016,11 @@
     if (newVideos.length > 0) {
       state.queue.push(...newVideos);
       state.totalCount = state.queue.length;
-      state.totalBatches = Math.ceil(state.queue.filter(v => v.status === STATUS.WAITING).length / state.batchSize);
+      const waitingCount = state.queue.filter(v => v.status === STATUS.WAITING || v.status === STATUS.FAILED).length;
+      state.totalBatches = Math.ceil(waitingCount / state.batchSize);
       
       showToast(`${newVideos.length} video(s) added to queue.`, 'success');
-      updateStatus(`${state.queue.length} videos in queue. Ready to start.`, 'idle');
+      updateStatus(`${state.queue.length} video(s) in queue. Ready to start.`, 'idle');
       saveQueueState();
     }
 
