@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XMON UI Test & Verification</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 40px;
+      background: #060709;
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+    }
+
+    .test-header {
+      margin-bottom: 24px;
+    }
+
+    .test-header h1 {
+      font-size: 22px;
+      margin: 0 0 6px 0;
+      color: #fff;
+    }
+
+    .test-header p {
+      font-size: 13px;
+      color: #8e8e9e;
+      margin: 0;
+    }
+
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 32px;
+      align-items: start;
+    }
+
+    .test-card {
+      background: #111218;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .test-card h3 {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #e63946;
+      margin: 0 0 12px 0;
+    }
+
+    /* Override widget fixed position for testing side-by-side */
+    .test-widget-wrapper #xmon-widget {
+      position: static !important;
+      bottom: auto !important;
+      right: auto !important;
+      width: 395px;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="test-header">
+    <h1>XMON YouTube Shorts Publisher UI Verification</h1>
+    <p>Testing scaling, spacing, alignment, navigation tabs, dropzone, and footer across all states.</p>
+  </div>
+
+  <div class="test-grid">
+    <!-- 1. Initial Upload State (Exact match to User Screenshot) -->
+    <div class="test-card">
+      <h3>State 1: Initial Upload (Matches Screenshot)</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab active" type="button"><span>Upload</span></button>
+            <button class="xmon-tab" type="button"><span>Queue</span></button>
+            <button class="xmon-tab" type="button"><span>Publish</span></button>
+            <button class="xmon-tab" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <div class="xmon-dropzone">
+                <div class="xmon-drop-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </div>
+                <div class="xmon-drop-title">Drop Shorts Here</div>
+                <div class="xmon-drop-subtitle">or click to browse files</div>
+                <div class="xmon-drop-limit">Max 100 videos per session</div>
+              </div>
+
+              <div class="xmon-status-bar">
+                <div class="xmon-status-indicator"></div>
+                <span class="xmon-status-text">Ready. Add videos to begin.</span>
+              </div>
+
+              <div class="xmon-actions">
+                <button class="xmon-btn xmon-btn-primary" type="button" disabled>
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+                  <span>Start Queue</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Active Upload State with Progress & Stats -->
+    <div class="test-card">
+      <h3>State 2: Active Upload & Stats</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab active" type="button">
+              <span>Upload</span>
+              <span class="xmon-tab-badge">25</span>
+            </button>
+            <button class="xmon-tab" type="button"><span>Queue</span></button>
+            <button class="xmon-tab" type="button">
+              <span>Publish</span>
+              <span class="xmon-tab-badge">8</span>
+            </button>
+            <button class="xmon-tab" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <div class="xmon-dropzone">
+                <div class="xmon-drop-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </div>
+                <div class="xmon-drop-title">Drop More Shorts</div>
+                <div class="xmon-drop-subtitle">or click to browse files</div>
+                <div class="xmon-drop-limit">25 / 100 in queue</div>
+              </div>
+
+              <div class="xmon-progress-section">
+                <div class="xmon-progress-header">
+                  <span class="xmon-progress-label">Overall Progress</span>
+                  <span class="xmon-progress-value">15 / 25</span>
+                </div>
+                <div class="xmon-progress-bar-track">
+                  <div class="xmon-progress-bar-fill active" style="width: 60%"></div>
+                </div>
+                <div class="xmon-batch-info">
+                  <span class="xmon-batch-label">Current Batch</span>
+                  <span class="xmon-batch-value">1 / 2</span>
+                </div>
+              </div>
+
+              <div class="xmon-stats">
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val info">25</span>
+                  <span class="xmon-stat-lbl">Total</span>
+                </div>
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val warning">15</span>
+                  <span class="xmon-stat-lbl">Uploaded</span>
+                </div>
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val success">12</span>
+                  <span class="xmon-stat-lbl">Published</span>
+                </div>
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val danger">0</span>
+                  <span class="xmon-stat-lbl">Failed</span>
+                </div>
+              </div>
+
+              <div class="xmon-status-bar">
+                <div class="xmon-status-indicator active"></div>
+                <span class="xmon-status-text">Uploading #16: funny_moments_ep3.mp4...</span>
+              </div>
+
+              <div class="xmon-actions">
+                <button class="xmon-btn xmon-btn-warning" type="button">
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>
+                  <span>Pause</span>
+                </button>
+                <button class="xmon-btn xmon-btn-danger" type="button">
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></span>
+                  <span>Stop</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Queue List State -->
+    <div class="test-card">
+      <h3>State 3: Queue Tab</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab" type="button"><span>Upload</span></button>
+            <button class="xmon-tab active" type="button"><span>Queue</span></button>
+            <button class="xmon-tab" type="button"><span>Publish</span></button>
+            <button class="xmon-tab" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <div class="xmon-section-title">Video Queue (4)</div>
+              <div class="xmon-queue-list">
+                <div class="xmon-queue-item status-published">
+                  <span class="xmon-queue-num">1</span>
+                  <span class="xmon-queue-name" title="Top 10 Insane Tricks You Must See.mp4">Top 10 Insane Tricks You Must See.mp4</span>
+                  <span class="xmon-queue-status published">Published</span>
+                </div>
+                <div class="xmon-queue-item status-publishing">
+                  <span class="xmon-queue-num">2</span>
+                  <span class="xmon-queue-name" title="Crazy viral moments part 42.mp4">Crazy viral moments part 42.mp4</span>
+                  <span class="xmon-queue-status publishing">Publishing</span>
+                </div>
+                <div class="xmon-queue-item status-uploading">
+                  <span class="xmon-queue-num">3</span>
+                  <span class="xmon-queue-name" title="Satisfying slime mixing timelapse.mp4">Satisfying slime mixing timelapse.mp4</span>
+                  <span class="xmon-queue-status uploading">Uploading</span>
+                </div>
+                <div class="xmon-queue-item status-failed">
+                  <span class="xmon-queue-num">4</span>
+                  <span class="xmon-queue-name" title="Failed video format test error.mp4">Failed video format test error.mp4</span>
+                  <span class="xmon-queue-status failed">Failed</span>
+                  <button class="xmon-queue-retry-btn" type="button">Retry</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Config Tab State -->
+    <div class="test-card">
+      <h3>State 4: Config Tab</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab" type="button"><span>Upload</span></button>
+            <button class="xmon-tab" type="button"><span>Queue</span></button>
+            <button class="xmon-tab" type="button"><span>Publish</span></button>
+            <button class="xmon-tab active" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <div class="xmon-section-title">Configuration</div>
+              <div class="xmon-controls">
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Visibility</span>
+                  <select class="xmon-select">
+                    <option selected>Public</option>
+                    <option>Unlisted</option>
+                    <option>Private</option>
+                  </select>
+                </div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Batch Size</span>
+                  <select class="xmon-select">
+                    <option>5 Videos</option>
+                    <option>10 Videos</option>
+                    <option selected>15 Videos</option>
+                  </select>
+                </div>
+                <div class="xmon-divider"></div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Not Made for Kids</span>
+                  <input type="checkbox" class="xmon-toggle" checked>
+                </div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Auto-Publish Drafts</span>
+                  <input type="checkbox" class="xmon-toggle" checked>
+                </div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Auto-Scroll for Drafts</span>
+                  <input type="checkbox" class="xmon-toggle" checked>
+                </div>
+                <div class="xmon-divider"></div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Delay Between Videos</span>
+                  <select class="xmon-select">
+                    <option>0.5s</option>
+                    <option selected>1.0s</option>
+                    <option>1.5s</option>
+                  </select>
+                </div>
+                <div class="xmon-control-row">
+                  <span class="xmon-control-label">Delay Between Batches</span>
+                  <select class="xmon-select">
+                    <option>2s</option>
+                    <option selected>3s</option>
+                    <option>5s</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Publish Tab State -->
+    <div class="test-card">
+      <h3>State 5: Draft Publisher Tab</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab" type="button"><span>Upload</span></button>
+            <button class="xmon-tab" type="button"><span>Queue</span></button>
+            <button class="xmon-tab active" type="button">
+              <span>Publish</span>
+              <span class="xmon-tab-badge">14</span>
+            </button>
+            <button class="xmon-tab" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <div class="xmon-section-title">Draft Publisher</div>
+              
+              <div class="xmon-summary-card">
+                <div class="xmon-summary-big">14</div>
+                <div class="xmon-summary-label">Drafts on Screen</div>
+              </div>
+
+              <div class="xmon-stats" style="grid-template-columns: repeat(2, 1fr);">
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val success">14</span>
+                  <span class="xmon-stat-lbl">Ready to Publish</span>
+                </div>
+                <div class="xmon-stat">
+                  <span class="xmon-stat-val info">0</span>
+                  <span class="xmon-stat-lbl">Skipped</span>
+                </div>
+              </div>
+
+              <div class="xmon-status-bar">
+                <div class="xmon-status-indicator active"></div>
+                <span class="xmon-status-text">Ready to auto-publish 14 drafts</span>
+              </div>
+
+              <div class="xmon-actions">
+                <button class="xmon-btn xmon-btn-primary" type="button">
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                  <span>Publish All Drafts</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 6: Daily Upload Limit Reached (Animated Error Notification) -->
+    <div class="test-card">
+      <h3>State 6: Daily Upload Limit Reached (Animated Alert)</h3>
+      <div class="test-widget-wrapper">
+        <div id="xmon-widget">
+          <div class="xmon-header">
+            <div class="xmon-brand">
+              <div class="xmon-logo">
+                <img src="icon128.png" alt="XMON" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />
+              </div>
+              <div class="xmon-brand-text">
+                <span class="xmon-brand-name">XMON</span>
+                <span class="xmon-brand-sub">Shorts Publisher</span>
+              </div>
+            </div>
+            <div class="xmon-header-controls">
+              <button class="xmon-header-btn" title="Minimize" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="xmon-tabs">
+            <button class="xmon-tab active" type="button"><span>Upload</span><span class="xmon-tab-badge">24</span></button>
+            <button class="xmon-tab" type="button"><span>Queue</span></button>
+            <button class="xmon-tab" type="button"><span>Publish</span></button>
+            <button class="xmon-tab" type="button"><span>Config</span></button>
+          </div>
+
+          <div class="xmon-tab-panel active">
+            <div class="xmon-body">
+              <!-- Animated Alert Card -->
+              <div class="xmon-alert-card daily_limit">
+                <div class="xmon-alert-header">
+                  <div class="xmon-alert-icon-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <div class="xmon-alert-beacon"></div>
+                  </div>
+                  <div class="xmon-alert-titles">
+                    <span class="xmon-alert-title">Daily upload limit reached</span>
+                    <span class="xmon-alert-msg">You can upload more videos in 24 hours.</span>
+                  </div>
+                  <button class="xmon-alert-dismiss" type="button" title="Dismiss">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+                <div class="xmon-alert-footer">
+                  <span class="xmon-alert-badge">24h Cooldown Active</span>
+                  <span class="xmon-alert-tip">Queue safely paused. Your remaining 24 videos are preserved to resume tomorrow.</span>
+                </div>
+              </div>
+
+              <!-- Dropzone -->
+              <div class="xmon-dropzone">
+                <div class="xmon-drop-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </div>
+                <div class="xmon-drop-title">Drop Shorts Here</div>
+                <div class="xmon-drop-subtitle">or click to browse files</div>
+                <div class="xmon-drop-limit">Max 100 videos per session</div>
+              </div>
+
+              <!-- Status Bar with Error -->
+              <div class="xmon-status-bar">
+                <div class="xmon-status-indicator error"></div>
+                <span class="xmon-status-text">Daily upload limit reached. You can upload more videos in 24 hours.</span>
+              </div>
+
+              <!-- Actions -->
+              <div class="xmon-actions">
+                <button class="xmon-btn xmon-btn-warning" type="button">
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+                  <span>Resume Tomorrow</span>
+                </button>
+                <button class="xmon-btn xmon-btn-secondary" type="button">
+                  <span class="xmon-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg></span>
+                  <span>Clear</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="xmon-footer">
+            <span class="xmon-footer-text">XMON Systems</span>
+            <span class="xmon-footer-version">v2.0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  <!-- Sample Floating Animated Toast for Visual Test -->
+  <div class="xmon-toast-hub">
+    <div class="xmon-toast-card daily-limit">
+      <div class="xmon-toast-icon-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="xmon-alert-beacon"></div>
+      </div>
+      <div class="xmon-toast-body">
+        <div class="xmon-toast-title">Daily upload limit reached</div>
+        <div class="xmon-toast-text">You can upload more videos in 24 hours.</div>
+        <div class="xmon-toast-sub">YouTube quota reached • Queue paused safely for 24 hours</div>
+      </div>
+      <button class="xmon-toast-close" type="button" title="Close" onclick="this.closest('.xmon-toast-card').remove();">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+</body>
+</html>

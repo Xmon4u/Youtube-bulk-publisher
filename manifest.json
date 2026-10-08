@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "XMON - YouTube Shorts Bulk Upload & Auto Publisher",
+  "version": "2.0.0",
+  "description": "Professional YouTube Shorts bulk upload, queue management, and automatic draft publishing system by XMON.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://studio.youtube.com/*",
+    "https://www.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://studio.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "xmon_logo.png",
+        "xmon_emblem.png",
+        "icon128.png",
+        "icon48.png",
+        "icon16.png"
+      ],
+      "matches": [
+        "https://studio.youtube.com/*"
+      ]
+    }
+  ]
+}

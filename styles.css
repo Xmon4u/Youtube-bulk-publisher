@@ -1,0 +1,1340 @@
+/* ============================================================
+   XMON YouTube Shorts Bulk Upload & Auto Publisher
+   Premium Widget Styling v2.0 - Pixel Perfect Layout System
+   ============================================================ */
+
+/* --- Google Fonts Import --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* --- CSS Custom Properties --- */
+:root {
+  --xmon-bg-primary: #0c0d12;
+  --xmon-bg-secondary: #14151c;
+  --xmon-bg-tertiary: #1b1c26;
+  --xmon-bg-card: rgba(255, 255, 255, 0.035);
+  --xmon-bg-card-hover: rgba(255, 255, 255, 0.055);
+  
+  --xmon-border: rgba(255, 255, 255, 0.08);
+  --xmon-border-hover: rgba(255, 255, 255, 0.16);
+  --xmon-border-active: rgba(230, 57, 70, 0.5);
+  
+  --xmon-text-primary: #f2f2f7;
+  --xmon-text-secondary: #9898ab;
+  --xmon-text-muted: #5e5e72;
+  
+  --xmon-accent: #e63946;
+  --xmon-accent-hover: #ff4757;
+  --xmon-accent-gradient: linear-gradient(135deg, #e63946 0%, #c0392b 100%);
+  --xmon-accent-gradient-hover: linear-gradient(135deg, #ff4757 0%, #e74c3c 100%);
+  --xmon-accent-glow: rgba(230, 57, 70, 0.35);
+  --xmon-accent-bg: rgba(230, 57, 70, 0.08);
+  
+  --xmon-success: #2ecc71;
+  --xmon-success-bg: rgba(46, 204, 113, 0.12);
+  --xmon-warning: #f39c12;
+  --xmon-warning-bg: rgba(243, 156, 18, 0.12);
+  --xmon-danger: #e74c3c;
+  --xmon-danger-bg: rgba(231, 76, 60, 0.12);
+  --xmon-info: #3498db;
+  --xmon-info-bg: rgba(52, 152, 219, 0.12);
+  --xmon-purple: #9b59b6;
+  --xmon-purple-bg: rgba(155, 89, 182, 0.12);
+  
+  --xmon-radius-sm: 6px;
+  --xmon-radius-md: 10px;
+  --xmon-radius-lg: 14px;
+  --xmon-radius-xl: 18px;
+  
+  --xmon-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --xmon-transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --xmon-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* --- Box Sizing & Scoped Reset --- */
+#xmon-widget,
+#xmon-widget * {
+  box-sizing: border-box;
+}
+
+#xmon-widget button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#xmon-widget input,
+#xmon-widget select {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+  outline: none;
+}
+
+/* --- Main Widget Container --- */
+#xmon-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 99999999;
+  width: 395px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  background: var(--xmon-bg-primary);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-xl);
+  box-shadow: var(--xmon-shadow);
+  font-family: var(--xmon-font);
+  color: var(--xmon-text-primary);
+  line-height: 1.4;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.22s ease, max-height 0.22s ease, transform 0.22s ease, opacity 0.22s ease;
+  user-select: none;
+}
+
+/* Minimized State */
+#xmon-widget.xmon-minimized {
+  width: 290px;
+  max-height: 60px;
+}
+
+/* --- Header --- */
+#xmon-widget .xmon-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 16px;
+  background: var(--xmon-bg-secondary);
+  border-bottom: 1px solid var(--xmon-border);
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#xmon-widget .xmon-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a1a24, #0c0c16);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 0 0 1px rgba(230, 57, 70, 0.18),
+    0 3px 10px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: relative;
+}
+
+#xmon-widget .xmon-logo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+#xmon-widget .xmon-logo img,
+#xmon-widget .xmon-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+#xmon-widget .xmon-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#xmon-widget .xmon-brand-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.6px;
+  line-height: 1.15;
+}
+
+#xmon-widget .xmon-brand-sub {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--xmon-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  line-height: 1.15;
+}
+
+#xmon-widget .xmon-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#xmon-widget .xmon-header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--xmon-text-muted);
+  border-radius: var(--xmon-radius-sm);
+  transition: var(--xmon-transition);
+}
+
+#xmon-widget .xmon-header-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+#xmon-widget .xmon-header-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* --- Tab Navigation --- */
+#xmon-widget .xmon-tabs {
+  display: flex;
+  background: var(--xmon-bg-secondary);
+  border-bottom: 1px solid var(--xmon-border);
+  padding: 4px 10px 0 10px;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+#xmon-widget .xmon-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 4px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--xmon-text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  transition: var(--xmon-transition);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+}
+
+#xmon-widget .xmon-tab:hover {
+  color: var(--xmon-text-primary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+#xmon-widget .xmon-tab.active {
+  color: var(--xmon-accent);
+  font-weight: 700;
+  border-bottom-color: var(--xmon-accent);
+  background: rgba(230, 57, 70, 0.06);
+}
+
+#xmon-widget .xmon-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--xmon-accent);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 16px;
+  line-height: 13px;
+  box-shadow: 0 1px 4px rgba(230, 57, 70, 0.4);
+}
+
+/* --- Tab Panels & Body Content --- */
+#xmon-widget .xmon-tab-panel {
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  max-height: 540px;
+}
+
+#xmon-widget .xmon-tab-panel.active {
+  display: flex;
+}
+
+#xmon-widget .xmon-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  user-select: text;
+}
+
+/* --- Drag & Drop Zone --- */
+#xmon-widget .xmon-dropzone {
+  border: 2px dashed rgba(230, 57, 70, 0.35);
+  border-radius: var(--xmon-radius-lg);
+  padding: 22px 16px;
+  min-height: 135px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: var(--xmon-transition);
+  background: rgba(230, 57, 70, 0.03);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  gap: 4px;
+}
+
+#xmon-widget .xmon-dropzone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--xmon-radius-lg);
+  background: linear-gradient(135deg, rgba(230, 57, 70, 0.06), transparent 70%);
+  pointer-events: none;
+}
+
+#xmon-widget .xmon-dropzone:hover,
+#xmon-widget .xmon-dropzone.drag-over {
+  border-color: var(--xmon-accent);
+  background: rgba(230, 57, 70, 0.08);
+  transform: scale(1.005);
+  box-shadow: 0 0 24px rgba(230, 57, 70, 0.18);
+}
+
+#xmon-widget .xmon-drop-icon {
+  width: 36px;
+  height: 36px;
+  color: var(--xmon-accent);
+  opacity: 0.9;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#xmon-widget .xmon-drop-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#xmon-widget .xmon-drop-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--xmon-text-primary);
+  margin-bottom: 2px;
+  line-height: 1.3;
+}
+
+#xmon-widget .xmon-drop-subtitle {
+  font-size: 11px;
+  color: var(--xmon-text-secondary);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+#xmon-widget .xmon-drop-limit {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--xmon-text-muted);
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--xmon-border);
+  border-radius: 20px;
+  display: inline-block;
+  letter-spacing: 0.3px;
+}
+
+/* --- Progress Bar Section --- */
+#xmon-widget .xmon-progress-section {
+  background: var(--xmon-bg-card);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#xmon-widget .xmon-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#xmon-widget .xmon-progress-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--xmon-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#xmon-widget .xmon-progress-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--xmon-text-primary);
+}
+
+#xmon-widget .xmon-progress-bar-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+#xmon-widget .xmon-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--xmon-accent), #ff6b81);
+  border-radius: 10px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  min-width: 0%;
+}
+
+#xmon-widget .xmon-progress-bar-fill.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: xmon-shimmer 2s infinite;
+}
+
+@keyframes xmon-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+#xmon-widget .xmon-batch-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--xmon-radius-sm);
+  margin-top: 2px;
+}
+
+#xmon-widget .xmon-batch-label {
+  font-size: 10px;
+  color: var(--xmon-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#xmon-widget .xmon-batch-value {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--xmon-accent);
+}
+
+/* --- Stats Grid --- */
+#xmon-widget .xmon-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+#xmon-widget .xmon-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  background: var(--xmon-bg-card);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-sm);
+  transition: var(--xmon-transition);
+}
+
+#xmon-widget .xmon-stat:hover {
+  border-color: var(--xmon-border-hover);
+  background: var(--xmon-bg-card-hover);
+}
+
+#xmon-widget .xmon-stat-val {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+#xmon-widget .xmon-stat-lbl {
+  font-size: 8.5px;
+  font-weight: 600;
+  color: var(--xmon-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+#xmon-widget .xmon-stat-val.success { color: var(--xmon-success); }
+#xmon-widget .xmon-stat-val.danger { color: var(--xmon-danger); }
+#xmon-widget .xmon-stat-val.info { color: var(--xmon-info); }
+#xmon-widget .xmon-stat-val.warning { color: var(--xmon-warning); }
+
+/* --- Status Bar --- */
+#xmon-widget .xmon-status-bar {
+  background: rgba(22, 23, 30, 0.85);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-md);
+  padding: 10px 14px;
+  font-size: 11.5px;
+  color: var(--xmon-text-secondary);
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  user-select: none;
+}
+
+#xmon-widget .xmon-status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--xmon-text-muted);
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-status-indicator.active {
+  background: var(--xmon-success);
+  box-shadow: 0 0 10px rgba(46, 204, 113, 0.6);
+  animation: xmon-pulse 1.8s infinite;
+}
+
+#xmon-widget .xmon-status-indicator.paused {
+  background: var(--xmon-warning);
+  box-shadow: 0 0 8px rgba(243, 156, 18, 0.5);
+}
+
+#xmon-widget .xmon-status-indicator.error {
+  background: var(--xmon-danger);
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.5);
+}
+
+@keyframes xmon-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.9); }
+}
+
+#xmon-widget .xmon-status-text,
+#xmon-widget #xmon-status-text,
+#xmon-widget #xmon-pub-status-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Action Buttons --- */
+#xmon-widget .xmon-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+#xmon-widget .xmon-btn {
+  flex: 1;
+  min-height: 40px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--xmon-radius-md);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--xmon-font);
+  cursor: pointer;
+  transition: var(--xmon-transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  letter-spacing: 0.3px;
+  outline: none;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+
+#xmon-widget .xmon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+#xmon-widget .xmon-btn-primary {
+  background: var(--xmon-accent-gradient);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 16px var(--xmon-accent-glow);
+}
+
+#xmon-widget .xmon-btn-primary:hover:not(:disabled) {
+  background: var(--xmon-accent-gradient-hover);
+  box-shadow: 0 6px 22px rgba(230, 57, 70, 0.5);
+  transform: translateY(-1px);
+}
+
+#xmon-widget .xmon-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+#xmon-widget .xmon-btn-secondary {
+  background: var(--xmon-bg-tertiary);
+  color: var(--xmon-text-secondary);
+  border: 1px solid var(--xmon-border);
+}
+
+#xmon-widget .xmon-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--xmon-border-hover);
+  color: var(--xmon-text-primary);
+}
+
+#xmon-widget .xmon-btn-success {
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--xmon-success);
+  border: 1px solid rgba(46, 204, 113, 0.35);
+}
+
+#xmon-widget .xmon-btn-success:hover:not(:disabled) {
+  background: rgba(46, 204, 113, 0.25);
+}
+
+#xmon-widget .xmon-btn-warning {
+  background: rgba(243, 156, 18, 0.15);
+  color: var(--xmon-warning);
+  border: 1px solid rgba(243, 156, 18, 0.35);
+}
+
+#xmon-widget .xmon-btn-warning:hover:not(:disabled) {
+  background: rgba(243, 156, 18, 0.25);
+}
+
+#xmon-widget .xmon-btn-danger {
+  background: var(--xmon-danger-bg);
+  color: var(--xmon-danger);
+  border: 1px solid rgba(231, 76, 60, 0.35);
+}
+
+#xmon-widget .xmon-btn-danger:hover:not(:disabled) {
+  background: rgba(231, 76, 60, 0.25);
+}
+
+#xmon-widget .xmon-btn-icon {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-btn-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* --- Video Queue List --- */
+#xmon-widget .xmon-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#xmon-widget .xmon-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--xmon-bg-card);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-sm);
+  transition: var(--xmon-transition);
+  min-height: 40px;
+}
+
+#xmon-widget .xmon-queue-item:hover {
+  border-color: var(--xmon-border-hover);
+  background: var(--xmon-bg-card-hover);
+}
+
+#xmon-widget .xmon-queue-item.status-uploading {
+  border-left: 3px solid var(--xmon-info);
+  background: var(--xmon-info-bg);
+}
+
+#xmon-widget .xmon-queue-item.status-uploaded {
+  border-left: 3px solid var(--xmon-warning);
+  background: var(--xmon-warning-bg);
+}
+
+#xmon-widget .xmon-queue-item.status-draft {
+  border-left: 3px solid var(--xmon-purple);
+  background: var(--xmon-purple-bg);
+}
+
+#xmon-widget .xmon-queue-item.status-publishing {
+  border-left: 3px solid var(--xmon-accent);
+  background: rgba(230, 57, 70, 0.08);
+}
+
+#xmon-widget .xmon-queue-item.status-published {
+  border-left: 3px solid var(--xmon-success);
+  background: var(--xmon-success-bg);
+}
+
+#xmon-widget .xmon-queue-item.status-failed {
+  border-left: 3px solid var(--xmon-danger);
+  background: var(--xmon-danger-bg);
+}
+
+#xmon-widget .xmon-queue-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--xmon-text-muted);
+  min-width: 20px;
+  text-align: center;
+}
+
+#xmon-widget .xmon-queue-name {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--xmon-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+#xmon-widget .xmon-queue-status {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-queue-status.waiting {
+  color: var(--xmon-text-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#xmon-widget .xmon-queue-status.uploading {
+  color: var(--xmon-info);
+  background: var(--xmon-info-bg);
+}
+
+#xmon-widget .xmon-queue-status.uploaded {
+  color: var(--xmon-warning);
+  background: var(--xmon-warning-bg);
+}
+
+#xmon-widget .xmon-queue-status.draft {
+  color: var(--xmon-purple);
+  background: var(--xmon-purple-bg);
+}
+
+#xmon-widget .xmon-queue-status.publishing {
+  color: var(--xmon-accent);
+  background: rgba(230, 57, 70, 0.12);
+}
+
+#xmon-widget .xmon-queue-status.published {
+  color: var(--xmon-success);
+  background: var(--xmon-success-bg);
+}
+
+#xmon-widget .xmon-queue-status.failed {
+  color: var(--xmon-danger);
+  background: var(--xmon-danger-bg);
+}
+
+#xmon-widget .xmon-queue-retry-btn {
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid var(--xmon-danger);
+  color: var(--xmon-danger);
+  font-size: 9.5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: var(--xmon-transition);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-queue-retry-btn:hover {
+  background: var(--xmon-danger);
+  color: #ffffff;
+}
+
+/* --- Draft Publisher (Publish Tab) --- */
+#xmon-widget .xmon-summary-card {
+  background: linear-gradient(135deg, rgba(230, 57, 70, 0.08), rgba(155, 89, 182, 0.05));
+  border: 1px solid rgba(230, 57, 70, 0.2);
+  border-radius: var(--xmon-radius-md);
+  padding: 16px;
+  text-align: center;
+}
+
+#xmon-widget .xmon-summary-big {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--xmon-text-primary);
+  line-height: 1.1;
+}
+
+#xmon-widget .xmon-summary-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--xmon-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+/* --- Configuration (Settings Tab) --- */
+#xmon-widget .xmon-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#xmon-widget .xmon-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+#xmon-widget .xmon-control-label {
+  font-size: 11.5px;
+  color: var(--xmon-text-secondary);
+  font-weight: 500;
+}
+
+#xmon-widget .xmon-select {
+  background: var(--xmon-bg-tertiary);
+  color: var(--xmon-text-primary);
+  border: 1px solid var(--xmon-border);
+  border-radius: var(--xmon-radius-sm);
+  padding: 6px 28px 6px 10px;
+  font-size: 11px;
+  font-family: var(--xmon-font);
+  outline: none;
+  cursor: pointer;
+  transition: var(--xmon-transition);
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239a9aab' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+#xmon-widget .xmon-select:focus {
+  border-color: var(--xmon-accent);
+  box-shadow: 0 0 0 2px var(--xmon-accent-glow);
+}
+
+#xmon-widget .xmon-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  transition: var(--xmon-transition);
+  outline: none;
+  flex-shrink: 0;
+}
+
+#xmon-widget .xmon-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--xmon-text-muted);
+  border-radius: 50%;
+  transition: var(--xmon-transition);
+}
+
+#xmon-widget .xmon-toggle:checked {
+  background: var(--xmon-accent);
+}
+
+#xmon-widget .xmon-toggle:checked::after {
+  left: 18px;
+  background: #ffffff;
+}
+
+#xmon-widget .xmon-divider {
+  height: 1px;
+  background: var(--xmon-border);
+  margin: 4px 0;
+}
+
+#xmon-widget .xmon-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--xmon-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+}
+
+/* --- Empty States --- */
+#xmon-widget .xmon-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  gap: 4px;
+}
+
+#xmon-widget .xmon-empty-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  color: var(--xmon-text-muted);
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#xmon-widget .xmon-empty-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#xmon-widget .xmon-empty-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--xmon-text-secondary);
+}
+
+#xmon-widget .xmon-empty-sub {
+  font-size: 10.5px;
+  color: var(--xmon-text-muted);
+}
+
+/* --- Footer --- */
+#xmon-widget .xmon-footer {
+  padding: 10px 18px 12px 18px;
+  border-top: 1px solid var(--xmon-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--xmon-bg-secondary);
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+#xmon-widget .xmon-footer-text {
+  font-size: 10px;
+  color: var(--xmon-text-muted);
+  font-weight: 500;
+  letter-spacing: 0.4px;
+}
+
+#xmon-widget .xmon-footer-version {
+  font-size: 9.5px;
+  color: var(--xmon-text-secondary);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--xmon-border);
+  padding: 2px 8px;
+  border-radius: 12px;
+  letter-spacing: 0.4px;
+}
+
+/* --- Toast Notifications (Injected into body) --- */
+/* ============================================================
+   ANIMATED ERROR NOTIFICATION & ALERT SYSTEM
+   ============================================================ */
+
+/* --- In-Widget Animated Alert Card --- */
+#xmon-widget .xmon-alert-card {
+  margin-bottom: 12px;
+  border-radius: var(--xmon-radius-md);
+  padding: 12px 14px;
+  background: rgba(230, 57, 70, 0.08);
+  border: 1px solid rgba(230, 57, 70, 0.35);
+  box-shadow: 0 4px 18px rgba(230, 57, 70, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+  animation: xmon-alert-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#xmon-widget .xmon-alert-card.daily_limit {
+  background: linear-gradient(135deg, rgba(230, 57, 70, 0.14) 0%, rgba(20, 10, 14, 0.9) 100%);
+  border: 1px solid rgba(255, 78, 80, 0.55);
+  box-shadow: 0 0 24px rgba(230, 57, 70, 0.28), 0 4px 14px rgba(0, 0, 0, 0.6);
+  animation: xmon-alert-slide-down 0.35s cubic-bezier(0.16, 1, 0.3, 1), xmon-alert-border-glow 3s infinite alternate ease-in-out;
+}
+
+#xmon-widget .xmon-alert-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3.5px;
+  height: 100%;
+  background: linear-gradient(180deg, #ff4e50, #e63946);
+  border-radius: 3px 0 0 3px;
+}
+
+#xmon-widget .xmon-alert-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+#xmon-widget .xmon-alert-icon-wrap {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff4e50;
+  margin-top: 1px;
+}
+
+#xmon-widget .xmon-alert-icon-wrap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 0 6px rgba(255, 78, 80, 0.6));
+  animation: xmon-icon-wobble 4s infinite ease-in-out;
+}
+
+#xmon-widget .xmon-alert-beacon {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 78, 80, 0.7);
+  animation: xmon-beacon-ring 2s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+  pointer-events: none;
+}
+
+#xmon-widget .xmon-alert-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+#xmon-widget .xmon-alert-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #ff5263;
+  line-height: 1.25;
+  letter-spacing: 0.2px;
+}
+
+#xmon-widget .xmon-alert-msg {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #f1f2f6;
+  line-height: 1.4;
+}
+
+#xmon-widget .xmon-alert-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--xmon-text-muted);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+#xmon-widget .xmon-alert-dismiss:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.08);
+}
+
+#xmon-widget .xmon-alert-dismiss svg {
+  width: 13px;
+  height: 13px;
+}
+
+#xmon-widget .xmon-alert-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-wrap: wrap;
+}
+
+#xmon-widget .xmon-alert-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(230, 57, 70, 0.2);
+  color: #ff6b77;
+  border: 1px solid rgba(230, 57, 70, 0.35);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+#xmon-widget .xmon-alert-tip {
+  font-size: 10px;
+  color: #a4b0be;
+  flex: 1;
+  line-height: 1.35;
+}
+
+/* --- Floating Animated Toast Notification System --- */
+.xmon-toast-hub {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 999999999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  max-width: 420px;
+}
+
+.xmon-toast-card {
+  pointer-events: auto;
+  border-radius: 12px;
+  padding: 13px 16px;
+  background: rgba(14, 12, 18, 0.95);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
+  font-family: var(--xmon-font);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+  animation: xmon-toast-spring 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.xmon-toast-card.daily-limit {
+  border: 1px solid rgba(255, 78, 80, 0.5);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.75), 0 0 25px rgba(230, 57, 70, 0.3);
+}
+
+.xmon-toast-card.daily-limit::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #ff4e50, #e63946);
+}
+
+.xmon-toast-icon-box {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(230, 57, 70, 0.15);
+  border: 1px solid rgba(230, 57, 70, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff4e50;
+  flex-shrink: 0;
+  position: relative;
+  margin-top: 1px;
+}
+
+.xmon-toast-icon-box svg {
+  width: 16px;
+  height: 16px;
+}
+
+.xmon-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.xmon-toast-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.25;
+}
+
+.xmon-toast-card.daily-limit .xmon-toast-title {
+  color: #ff5263;
+}
+
+.xmon-toast-text {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #dfe4ea;
+  line-height: 1.4;
+}
+
+.xmon-toast-sub {
+  font-size: 10px;
+  color: #747d8c;
+  margin-top: 2px;
+}
+
+.xmon-toast-close {
+  background: transparent;
+  border: none;
+  color: #747d8c;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.xmon-toast-close:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.xmon-toast-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.xmon-toast-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #ff4e50, #e63946);
+  width: 100%;
+  animation: xmon-toast-timeout linear forwards;
+}
+
+/* Animations */
+@keyframes xmon-alert-slide-down {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes xmon-alert-border-glow {
+  0% { box-shadow: 0 0 16px rgba(230, 57, 70, 0.2); }
+  100% { box-shadow: 0 0 28px rgba(230, 57, 70, 0.45); }
+}
+
+@keyframes xmon-beacon-ring {
+  0% { transform: scale(0.85); opacity: 0.9; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes xmon-icon-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  2% { transform: rotate(-8deg); }
+  4% { transform: rotate(8deg); }
+  6% { transform: rotate(-4deg); }
+  8% { transform: rotate(0deg); }
+}
+
+@keyframes xmon-toast-spring {
+  0% { opacity: 0; transform: translateX(40px) scale(0.92); }
+  60% { opacity: 1; transform: translateX(-4px) scale(1.02); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes xmon-toast-out {
+  0% { opacity: 1; transform: translateX(0) scale(1); }
+  100% { opacity: 0; transform: translateX(30px) scale(0.95); }
+}
+
+/* --- Custom Scrollbar --- */
+#xmon-widget ::-webkit-scrollbar {
+  width: 5px;
+}
+
+#xmon-widget ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#xmon-widget ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+#xmon-widget ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* --- Hidden File Input --- */
+.xmon-file-input {
+  display: none !important;
+}

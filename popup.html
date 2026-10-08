@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XMON - YouTube Shorts Publisher</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 340px;
+      background: #080810;
+      color: #f0f0f2;
+      font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+    }
+    .popup-bg {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+    }
+    .popup-bg::before {
+      content: ''; position: absolute; top: -60px; right: -40px;
+      width: 220px; height: 220px;
+      background: radial-gradient(circle, rgba(230,57,70,0.2) 0%, transparent 70%);
+      border-radius: 50%; animation: glow-pulse 4s ease-in-out infinite;
+    }
+    .popup-bg::after {
+      content: ''; position: absolute; bottom: -40px; left: -30px;
+      width: 180px; height: 180px;
+      background: radial-gradient(circle, rgba(155,89,182,0.1) 0%, transparent 70%);
+      border-radius: 50%; animation: glow-pulse 6s ease-in-out infinite reverse;
+    }
+    @keyframes glow-pulse {
+      0%, 100% { opacity: 0.6; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.12); }
+    }
+    .popup-container { position: relative; z-index: 1; display: flex; flex-direction: column; }
+    .popup-header {
+      display: flex; align-items: center; gap: 13px; padding: 18px 18px 15px;
+      background: rgba(255,255,255,0.025); border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .popup-logo {
+      position: relative; width: 44px; height: 44px; border-radius: 10px;
+      overflow: hidden; flex-shrink: 0;
+      background: linear-gradient(135deg, #1a1a24, #0c0c16);
+      border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: 0 0 0 1px rgba(230,57,70,0.15), 0 4px 16px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .popup-logo::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .popup-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .logo-svg-fallback { display: none; width: 68%; height: 68%; }
+    .popup-brand { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+    .popup-brand-name { font-size: 17px; font-weight: 900; letter-spacing: 1px; color: #ffffff; line-height: 1; }
+    .popup-brand-tagline { font-size: 9.5px; font-weight: 600; color: #4a4a5e; text-transform: uppercase; letter-spacing: 1.5px; }
+    .popup-version {
+      background: linear-gradient(135deg, rgba(230,57,70,0.18), rgba(230,57,70,0.08));
+      color: #e63946; font-size: 9px; font-weight: 700; padding: 4px 9px;
+      border-radius: 20px; letter-spacing: 0.5px; border: 1px solid rgba(230,57,70,0.25);
+    }
+    .popup-status-strip {
+      display: flex; align-items: center; gap: 8px; padding: 8px 18px;
+      background: rgba(46,204,113,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #2ecc71;
+      box-shadow: 0 0 10px rgba(46,204,113,0.7); animation: dot-pulse 2s ease-in-out infinite; flex-shrink: 0;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(46,204,113,0.7); }
+      50% { opacity: 0.7; box-shadow: 0 0 4px rgba(46,204,113,0.3); }
+    }
+    .status-strip-text { font-size: 10.5px; color: #7a7a90; font-weight: 500; }
+    .status-strip-text strong { color: #2ecc71; font-weight: 700; }
+    .popup-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .quick-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .qs-item {
+      background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px; padding: 10px 6px; display: flex; flex-direction: column;
+      align-items: center; gap: 2px; text-align: center; transition: all 0.18s ease;
+    }
+    .qs-item:hover { background: rgba(255,255,255,0.045); border-color: rgba(255,255,255,0.12); }
+    .qs-val { font-size: 18px; font-weight: 800; color: #ffffff; line-height: 1.1; }
+    .qs-lbl { font-size: 8px; font-weight: 600; color: #4a4a5e; text-transform: uppercase; letter-spacing: 0.5px; }
+    .features { display: flex; flex-direction: column; gap: 4px; }
+    .feature-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+      background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 8px; transition: all 0.18s ease;
+    }
+    .feature-item:hover {
+      background: rgba(255,255,255,0.045); border-color: rgba(255,255,255,0.1); transform: translateX(2px);
+    }
+    .feature-icon { width: 15px; height: 15px; color: #e63946; flex-shrink: 0; opacity: 0.85; }
+    .feature-text { font-size: 11px; color: #8a8aa0; font-weight: 500; flex: 1; }
+    .feature-badge {
+      font-size: 8.5px; font-weight: 700; padding: 2px 6px; border-radius: 8px;
+      color: #e63946; background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.2); letter-spacing: 0.3px;
+    }
+    .popup-cta {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 13px 16px;
+      background: linear-gradient(135deg, #e63946 0%, #c0392b 100%);
+      color: #fff; border: none; border-radius: 10px; font-size: 12.5px; font-weight: 800;
+      font-family: 'Inter', sans-serif; cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.4,0,0.2,1); letter-spacing: 0.5px;
+      box-shadow: 0 4px 20px rgba(230,57,70,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+      position: relative; overflow: hidden;
+    }
+    .popup-cta::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+      transform: translateX(-100%); transition: transform 0.5s ease;
+    }
+    .popup-cta:hover::before { transform: translateX(100%); }
+    .popup-cta:hover {
+      background: linear-gradient(135deg, #ff4757 0%, #e74c3c 100%);
+      box-shadow: 0 6px 28px rgba(230,57,70,0.55); transform: translateY(-1px);
+    }
+    .popup-cta:active { transform: translateY(0); box-shadow: 0 3px 12px rgba(230,57,70,0.35); }
+    .popup-cta svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .popup-footer {
+      padding: 10px 18px; border-top: 1px solid rgba(255,255,255,0.04);
+      display: flex; justify-content: space-between; align-items: center;
+      background: rgba(255,255,255,0.015);
+    }
+    .popup-footer-text { font-size: 9px; color: #2e2e3e; letter-spacing: 0.3px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="popup-bg"></div>
+  <div class="popup-container">
+    <!-- Header -->
+    <div class="popup-header">
+      <div class="popup-logo">
+        <img id="popup-logo-img" src="icon128.png" alt="XMON" />
+        <svg id="popup-logo-svg" class="logo-svg-fallback" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="pg-a" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+              <stop offset="40%" stop-color="#c8c8c8"/>
+              <stop offset="100%" stop-color="#787878"/>
+            </linearGradient>
+            <filter id="pg-s"><feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.7)"/></filter>
+          </defs>
+          <polygon points="15,10 40,45 15,80 30,80 50,53 70,80 85,80 60,45 85,10 70,10 50,37 30,10"
+                   fill="url(#pg-a)" filter="url(#pg-s)"/>
+        </svg>
+      </div>
+      <div class="popup-brand">
+        <span class="popup-brand-name">XMON</span>
+        <span class="popup-brand-tagline">Shorts Publisher</span>
+      </div>
+      <span class="popup-version">v2.0</span>
+    </div>
+
+    <!-- Live Status Strip -->
+    <div class="popup-status-strip">
+      <div class="status-dot"></div>
+      <span class="status-strip-text"><strong>Active</strong> on YouTube Studio</span>
+    </div>
+
+    <!-- Body -->
+    <div class="popup-body">
+      <!-- Quick Stats -->
+      <div class="quick-stats">
+        <div class="qs-item">
+          <div class="qs-val" style="color:#e63946;">100</div>
+          <div class="qs-lbl">Max Videos</div>
+        </div>
+        <div class="qs-item">
+          <div class="qs-val" style="color:#3498db;">15</div>
+          <div class="qs-lbl">Per Batch</div>
+        </div>
+        <div class="qs-item">
+          <div class="qs-val" style="color:#2ecc71;">Auto</div>
+          <div class="qs-lbl">Publish</div>
+        </div>
+      </div>
+      <!-- Features -->
+      <div class="features">
+        <div class="feature-item">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span class="feature-text">Drag &amp; drop bulk upload</span>
+          <span class="feature-badge">100 max</span>
+        </div>
+        <div class="feature-item">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          <span class="feature-text">Auto-publish saved drafts</span>
+          <span class="feature-badge">1-click</span>
+        </div>
+        <div class="feature-item">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+          </svg>
+          <span class="feature-text">Smart retry &amp; error recovery</span>
+        </div>
+        <div class="feature-item">
+          <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          <span class="feature-text">Configurable batch settings</span>
+        </div>
+      </div>
+      <!-- CTA -->
+      <button id="open-studio-btn" class="popup-cta">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>
+        </svg>
+        Open YouTube Studio
+      </button>
+    </div>
+
+    <!-- Footer -->
+    <div class="popup-footer">
+      <span class="popup-footer-text">XMON Systems</span>
+      <span class="popup-footer-text">Built for creators</span>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
