@@ -156,12 +156,26 @@
   z-index: 1;
 }
 
-#xmon-widget .xmon-logo img,
-#xmon-widget .xmon-logo svg {
+#xmon-widget .xmon-logo img.xmon-logo-img {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
+  border-radius: 8px;
+}
+
+#xmon-widget .xmon-logo svg.xmon-logo-svg {
+  width: 82%;
+  height: 82%;
+  display: none;
+}
+
+#xmon-widget .xmon-logo.show-fallback img.xmon-logo-img {
+  display: none !important;
+}
+
+#xmon-widget .xmon-logo.show-fallback svg.xmon-logo-svg {
+  display: block !important;
 }
 
 #xmon-widget .xmon-brand-text {

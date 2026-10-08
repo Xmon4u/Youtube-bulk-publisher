@@ -135,18 +135,26 @@
     <!-- Header -->
     <div class="popup-header">
       <div class="popup-logo">
-        <img id="popup-logo-img" src="icon128.png" alt="XMON" />
+        <img id="popup-logo-img" src="icon128.png" alt="" />
         <svg id="popup-logo-svg" class="logo-svg-fallback" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <linearGradient id="pg-a" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
-              <stop offset="40%" stop-color="#c8c8c8"/>
-              <stop offset="100%" stop-color="#787878"/>
+              <stop offset="0%" stop-color="#ffffff"/>
+              <stop offset="30%" stop-color="#dce5ef"/>
+              <stop offset="70%" stop-color="#8ba0b5"/>
+              <stop offset="100%" stop-color="#46586d"/>
             </linearGradient>
-            <filter id="pg-s"><feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="rgba(0,0,0,0.7)"/></filter>
+            <linearGradient id="pg-b" x1="100%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#e2e8f0"/>
+              <stop offset="45%" stop-color="#64748b"/>
+              <stop offset="100%" stop-color="#1e293b"/>
+            </linearGradient>
+            <filter id="pg-s"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="rgba(0,0,0,0.7)"/></filter>
           </defs>
-          <polygon points="15,10 40,45 15,80 30,80 50,53 70,80 85,80 60,45 85,10 70,10 50,37 30,10"
-                   fill="url(#pg-a)" filter="url(#pg-s)"/>
+          <polygon points="18,16 42,16 52,47 40,53 16,25" fill="url(#pg-a)" filter="url(#pg-s)"/>
+          <polygon points="40,53 52,47 84,84 68,84 34,57" fill="url(#pg-b)"/>
+          <polygon points="82,16 66,16 48,45 58,51 84,22" fill="url(#pg-a)" filter="url(#pg-s)"/>
+          <polygon points="48,45 58,51 24,84 16,84 42,55" fill="url(#pg-b)"/>
         </svg>
       </div>
       <div class="popup-brand">
