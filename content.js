@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.5.0
+   Content Script v2.6.0
    ============================================================ */
 
 (() => {
@@ -8,7 +8,8 @@
   if (window.__XMON_BULK_PUBLISHER_V2__) return;
   window.__XMON_BULK_PUBLISHER_V2__ = true;
 
-  console.log('[XMON] Extension v2.0 initialized on YouTube Studio.');
+  const EXT_VERSION = chrome?.runtime?.getManifest?.()?.version || '2.6.0';
+  console.log(`[XMON] Extension v${EXT_VERSION} initialized on YouTube Studio.`);
 
   // ============================================================
   // SVG ICONS (inline, no emoji)
@@ -53,37 +54,115 @@
   // UTILITY FUNCTIONS (preserved from v1)
   // ============================================================
   function deepQuery(selector, root = document) {
+    if (!root) return null;
+
+    // Handle comma-separated list of selectors
+    if (selector.includes(',')) {
+      const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        const found = deepQuery(part, root);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    // Handle descendant selectors across shadow boundaries (e.g. "ytcp-uploads-dialog #close-button")
+    const spaceIdx = selector.indexOf(' ');
+    if (spaceIdx > 0) {
+      const head = selector.substring(0, spaceIdx).trim();
+      const tail = selector.substring(spaceIdx + 1).trim();
+      try {
+        const nativeMatch = root.querySelector?.(selector);
+        if (nativeMatch) return nativeMatch;
+      } catch (e) {}
+
+      const headEl = deepQuery(head, root);
+      if (headEl) {
+        const foundInHead = deepQuery(tail, headEl);
+        if (foundInHead) return foundInHead;
+      }
+    }
+
+    // Direct querySelector on root
     try {
-      const found = root.querySelector(selector);
-      if (found) return found;
+      const direct = root.querySelector?.(selector);
+      if (direct) return direct;
     } catch (e) {}
-    const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
-    for (const el of all) {
+
+    // Check root's own shadowRoot if root is a custom element
+    if (root.shadowRoot) {
+      const inShadow = deepQuery(selector, root.shadowRoot);
+      if (inShadow) return inShadow;
+    }
+
+    // Search in all child elements and their shadowRoots
+    const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+    for (const el of children) {
       if (el.shadowRoot) {
-        const res = deepQuery(selector, el.shadowRoot);
-        if (res) return res;
+        const inChildShadow = deepQuery(selector, el.shadowRoot);
+        if (inChildShadow) return inChildShadow;
       }
     }
     return null;
   }
 
   function deepQueryAll(selector, root = document) {
-    let results = [];
+    if (!root) return [];
+    const results = [];
+
+    // Handle comma-separated selectors
+    if (selector.includes(',')) {
+      const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        results.push(...deepQueryAll(part, root));
+      }
+      return Array.from(new Set(results));
+    }
+
+    // Handle descendant across boundaries
+    const spaceIdx = selector.indexOf(' ');
+    if (spaceIdx > 0) {
+      const head = selector.substring(0, spaceIdx).trim();
+      const tail = selector.substring(spaceIdx + 1).trim();
+      try {
+        const native = root.querySelectorAll?.(selector);
+        if (native && native.length > 0) {
+          results.push(...Array.from(native));
+        }
+      } catch (e) {}
+
+      const headEls = deepQueryAll(head, root);
+      for (const h of headEls) {
+        results.push(...deepQueryAll(tail, h));
+      }
+      return Array.from(new Set(results));
+    }
+
+    // Native querySelectorAll on root
     try {
-      results.push(...Array.from(root.querySelectorAll(selector)));
+      if (root.querySelectorAll) {
+        results.push(...Array.from(root.querySelectorAll(selector)));
+      }
     } catch (e) {}
-    const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
-    for (const el of all) {
+
+    // Root's own shadowRoot
+    if (root.shadowRoot) {
+      results.push(...deepQueryAll(selector, root.shadowRoot));
+    }
+
+    // Children's shadowRoots
+    const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+    for (const el of children) {
       if (el.shadowRoot) {
         results.push(...deepQueryAll(selector, el.shadowRoot));
       }
     }
-    return results;
+
+    return Array.from(new Set(results));
   }
 
   function isElementVisible(el) {
     if (!el) return false;
-    if (el.getAttribute('aria-hidden') === 'true') return false;
     if (el.hasAttribute('hidden')) return false;
     if (el.hasAttribute('opened') && el.getAttribute('opened') === 'false') return false;
     try {
@@ -98,13 +177,23 @@
 
   function isDialogOpen(dialog) {
     if (!dialog) return false;
-    if (!isElementVisible(dialog)) return false;
-    if (dialog.getAttribute('aria-hidden') === 'true') return false;
     if (dialog.hasAttribute('opened') && dialog.getAttribute('opened') === 'false') return false;
-    const content = dialog.querySelector('#dialog, .dialog-content, ytcp-dialog, ytcp-multi-file-upload-dialog') || dialog;
+    if (dialog.hasAttribute('hidden')) return false;
+
+    // Check inner dialog content in shadowRoot or light DOM
+    const content = dialog.shadowRoot?.querySelector('#dialog, .dialog-content, tp-yt-paper-dialog, ytcp-dialog')
+      || dialog.querySelector('#dialog, .dialog-content, ytcp-dialog, ytcp-multi-file-upload-dialog')
+      || dialog;
+
     const rect = content.getBoundingClientRect();
-    return rect.width > 50 && rect.height > 50;
+    if (rect.width > 50 && rect.height > 50) return true;
+
+    const hostRect = dialog.getBoundingClientRect();
+    return hostRect.width > 50 && hostRect.height > 50;
   }
+
+  // Expose helpers for automated testing & verification
+  window.__XMON_DEV__ = { deepQuery, deepQueryAll, isDialogOpen, isElementVisible };
 
   function normalizeVideoTitle(str) {
     if (!str) return '';
@@ -672,38 +761,34 @@
   // ============================================================
   // Helper: Open YouTube Studio Upload Dialog (handles direct icon and CREATE menu)
   async function openYouTubeUploadDialog() {
-    // 1. If dialog is already open in ANY state, accept it and return true.
-    //    Only force-close if it's stuck in a post-upload state with no drop zone
-    //    AND no file items (i.e. truly stuck after a previous batch).
+    // 1. If dialog is ALREADY open, check if it's usable for uploading
     const existingDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-    if (existingDialog && isDialogOpen(existingDialog)) {
-      // Check if it has any active upload items (still processing a previous batch)
+    if (existingDialog && (isDialogOpen(existingDialog) || isElementVisible(existingDialog))) {
+      // Check if it already has active upload items (still uploading previous batch)
       const hasUploadItems = deepQueryAll('ytcp-uploads-file-item, .upload-item', existingDialog).length > 0;
-      const hasDropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
-      const dropzoneVisible = hasDropzone && isElementVisible(hasDropzone);
-
-      if (dropzoneVisible || hasUploadItems) {
-        // Dialog is ready (drop zone visible) or actively uploading — use it as-is
-        console.log('[XMON] Upload dialog already open and usable. Proceeding.');
+      if (hasUploadItems) {
+        console.log('[XMON] Upload dialog open and actively uploading files. Reusing dialog.');
         return true;
       }
 
-      // Dialog is open but appears to be in an idle/stuck state with no drop zone and no items
-      // This happens when the dialog shows the initial empty state without a visible drop target
-      // Try to use it anyway — the file input may still be injected
-      console.log('[XMON] Upload dialog open but drop zone not visible. Attempting to use it anyway.');
-      // Wait a moment to see if drop zone appears
-      await sleep(1200);
-      const refreshedDropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
-      if (refreshedDropzone) {
-        console.log('[XMON] Drop zone appeared after wait. Proceeding.');
+      // Check if dropzone, file input, or "Select files" button is present
+      const hasDropzone = deepQuery('ytcp-upload-drop-target, #drop-target, #file-loader, input[type="file"]:not([data-xmon-internal]), #select-button', existingDialog);
+      if (hasDropzone) {
+        console.log('[XMON] Upload dialog open and ready for file injection. Reusing dialog.');
         return true;
       }
 
-      // Still no drop zone - this dialog is truly stuck. Close and reopen.
-      console.log('[XMON] Dialog stuck with no drop zone. Force closing to reopen...');
+      // Check dialog text for upload cues
+      const dialogText = (existingDialog.textContent || '').toLowerCase();
+      if (dialogText.includes('upload') || dialogText.includes('drag and drop') || dialogText.includes('select files')) {
+        console.log('[XMON] Upload dialog recognized by text cues. Reusing dialog.');
+        return true;
+      }
+
+      // If open in an unrecognized state, attempt a clean close before reopening
+      console.log('[XMON] Existing dialog in unknown state. Closing before reopening...');
       await closeUploadDialog();
-      await sleep(2000);
+      await sleep(1200);
     }
 
     // 2. Try direct upload button / icon on the page
@@ -720,8 +805,8 @@
       clickElement(directUploadBtn);
       const dialog = await waitFor(() => {
         const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-        return (d && isDialogOpen(d)) ? d : null;
-      }, 5000);
+        return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
+      }, 5000).catch(() => null);
       if (dialog) return true;
     }
 
@@ -751,15 +836,15 @@
           if (t.includes('upload') && isElementVisible(it)) return it;
         }
         return null;
-      }, 5000);
+      }, 5000).catch(() => null);
 
       if (uploadItem) {
         console.log('[XMON] Clicking "Upload videos" dropdown item...');
         clickElement(uploadItem);
         const dialog = await waitFor(() => {
           const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-          return (d && isDialogOpen(d)) ? d : null;
-        }, 6000);
+          return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
+        }, 6000).catch(() => null);
         if (dialog) return true;
       }
     }
@@ -767,8 +852,8 @@
     // 4. Final verification if dialog appeared
     const dialog = await waitFor(() => {
       const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-      return (d && isDialogOpen(d)) ? d : null;
-    }, 4000);
+      return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
+    }, 4000).catch(() => null);
 
     return !!dialog;
   }
@@ -974,21 +1059,19 @@
   // HELPER: Check if a YouTube upload close/done button is truly enabled
   // ============================================================
   function isUploadCloseBtnEnabled() {
+    const dialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+    if (!dialog) return null;
+
     const selectors = [
-      'ytcp-uploads-dialog #close-button',
-      'ytcp-multi-file-upload-dialog #close-button',
-      'ytcp-uploads-dialog ytcp-button[id="close-button"]',
-      'ytcp-multi-file-upload-dialog ytcp-button[id="close-button"]',
-      'ytcp-uploads-dialog ytcp-icon-button#close-button',
-      'ytcp-multi-file-upload-dialog ytcp-icon-button#close-button',
-      'ytcp-uploads-dialog [aria-label="Close"]',
-      'ytcp-multi-file-upload-dialog [aria-label="Close"]',
-      '#dialog-close-button',
+      '#close-button',
+      'ytcp-icon-button#close-button',
       'ytcp-button#close-button',
-      'ytcp-button#dismiss-button'
+      '[aria-label="Close"]',
+      '#dialog-close-button',
+      '#dismiss-button'
     ];
     for (const sel of selectors) {
-      const btn = deepQuery(sel);
+      const btn = deepQuery(sel, dialog);
       if (!btn || !isElementVisible(btn)) continue;
       if (btn.hasAttribute('disabled')) continue;
       if (btn.getAttribute('aria-disabled') === 'true') continue;
@@ -1004,79 +1087,58 @@
   // ============================================================
   async function closeUploadDialog() {
     const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog, ytcp-dialog');
-    if (!uploadDialog || !isDialogOpen(uploadDialog)) {
+    if (!uploadDialog) {
       return;
     }
 
-    const closeSelectors = [
-      'ytcp-uploads-dialog #close-button',
-      'ytcp-multi-file-upload-dialog #close-button',
-      'ytcp-uploads-dialog ytcp-button[id="close-button"]',
-      'ytcp-multi-file-upload-dialog ytcp-button[id="close-button"]',
-      'ytcp-uploads-dialog ytcp-icon-button#close-button',
-      'ytcp-multi-file-upload-dialog ytcp-icon-button#close-button',
-      'ytcp-uploads-dialog [aria-label="Close"]',
-      'ytcp-multi-file-upload-dialog [aria-label="Close"]',
-      '#dialog-close-button',
-      'ytcp-button#dismiss-button',
-      'ytcp-button#close-button'
-    ];
+    console.log('[XMON] Attempting to close upload dialog...');
 
     for (let attempt = 0; attempt < 5; attempt++) {
-      for (const sel of closeSelectors) {
-        const btn = deepQuery(sel);
-        if (btn && isElementVisible(btn)) {
-          clickElement(btn);
-          await sleep(600);
-          break;
-        }
+      // 1. Search for close button inside uploadDialog first, then globally
+      const closeBtn = deepQuery('#close-button, ytcp-icon-button#close-button, ytcp-button#close-button, [aria-label="Close"], #dismiss-button', uploadDialog)
+        || deepQuery('#close-button, [aria-label="Close"]');
+
+      if (closeBtn && isElementVisible(closeBtn)) {
+        console.log('[XMON] Found close button, clicking...');
+        clickElement(closeBtn);
+        await sleep(700);
       }
 
-      // Handle confirmation prompts - ONLY click "Save as draft" or "Close".
-      // NEVER click "Cancel uploads" as that aborts the upload entirely.
-      const confirmPromptBtns = deepQueryAll([
-        'ytcp-confirmation-dialog #confirm-button',
-        'ytcp-confirmation-dialog ytcp-button',
-        'ytcp-alert-dialog #confirm-button',
-        'ytcp-dialog #confirm-button'
-      ].join(', '));
-      for (const cBtn of confirmPromptBtns) {
-        if (cBtn && isElementVisible(cBtn)) {
+      // 2. Handle confirmation prompt if shown
+      const confirmDialog = deepQuery('ytcp-confirmation-dialog, ytcp-alert-dialog');
+      if (confirmDialog && (isDialogOpen(confirmDialog) || isElementVisible(confirmDialog))) {
+        const cBtns = deepQueryAll('ytcp-button, button', confirmDialog);
+        for (const cBtn of cBtns) {
           const text = (cBtn.textContent || '').toLowerCase().trim();
-          // Only click buttons that save/close - never buttons that cancel/abort uploads
-          const isSafeToClick = text.includes('save') ||
-                                text.includes('draft') ||
-                                text === 'close' ||
-                                text.includes('yes') ||
-                                text.includes('proceed');
-          // Explicitly reject buttons that would abort the upload
-          const isDestructive = text.includes('cancel upload') ||
-                                text.includes('discard') ||
-                                text.includes('abandon');
-          if (isSafeToClick && !isDestructive) {
+          const isSafe = text.includes('save') || text.includes('draft') || text === 'close' || text.includes('yes') || text.includes('proceed');
+          const isDestructive = text.includes('cancel upload') || text.includes('discard') || text.includes('abandon');
+          if (isSafe && !isDestructive && isElementVisible(cBtn)) {
+            console.log('[XMON] Clicking safe confirmation prompt button:', text);
             clickElement(cBtn);
-            await sleep(600);
+            await sleep(700);
             break;
           }
         }
       }
 
+      // 3. Check if upload dialog is closed
       const active = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-      if (!active || !isDialogOpen(active)) {
-        console.log('[XMON] Upload dialog confirmed closed.');
+      if (!active || (!isDialogOpen(active) && !isElementVisible(active))) {
+        console.log('[XMON] Upload dialog successfully closed.');
         await sleep(500);
         return;
       }
 
-      // Send Escape key if still open
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
+      // 4. Send Escape key to dialog and window
+      uploadDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
       await sleep(800);
     }
 
     // Final check: wait up to 3s for dialog to fully disappear from DOM
     await waitFor(() => {
       const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-      return (!d || !isDialogOpen(d)) ? true : null;
+      return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
     }, 3000).catch(() => {});
   }
 
@@ -1298,8 +1360,9 @@
   async function verifyAndSyncBatchDrafts(currentBatchVideos, maxWaitMs = 25000) {
     updateStatus(`Verifying drafts in YouTube Studio...`, 'active');
     
-    // Ensure we are on Content page (Videos tab first, where new drafts appear)
-    await navigateToContentSafe('videos');
+    // Ensure we are on Content page (Shorts tab first for Shorts, or Videos)
+    const initialTab = window.location.href.includes('/short') ? 'shorts' : 'shorts';
+    await navigateToContentSafe(initialTab);
     await sleep(2000);
 
     const start = Date.now();
@@ -1537,17 +1600,19 @@
             continue;
           }
 
-          // Step 1: Pre-batch cleanup — ensure previous dialogs are 100% closed
-          // Use a longer wait + retry loop to guarantee dialog is gone before batch starts
-          updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Preparing (closing any open dialogs)...`, 'active');
-          await closeStuckDialogs(true);
-          await closeUploadDialog();
-          // Wait until no upload dialog is present in the DOM
-          await waitFor(() => {
-            const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-            return (!d || !isDialogOpen(d)) ? true : null;
-          }, 8000).catch(() => {});
-          await sleep(1000);
+          // Step 1: Pre-batch cleanup — close stuck or leftover dialogs with old items
+          const existingD = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+          const hasStuckOldItems = existingD && deepQueryAll('ytcp-uploads-file-item, .upload-item', existingD).length > 0;
+          if (hasStuckOldItems) {
+            updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Preparing (closing previous dialog)...`, 'active');
+            await closeStuckDialogs(true);
+            await closeUploadDialog();
+            await waitFor(() => {
+              const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+              return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
+            }, 6000).catch(() => {});
+            await sleep(800);
+          }
 
           // Step 2: Inject and upload the batch files to YouTube Studio
           await uploadBatchToYouTube(batchFiles);
@@ -2151,7 +2216,7 @@
       <!-- Footer -->
       <div class="xmon-footer">
         <span class="xmon-footer-text">XMON Systems</span>
-        <span class="xmon-footer-version">v2.3.0</span>
+        <span class="xmon-footer-version">v${EXT_VERSION}</span>
       </div>
     `;
   }

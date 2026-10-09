@@ -3,7 +3,16 @@
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. Logo fallback handling (CSP-safe, no inline handlers)
+  // 1. Dynamic version from manifest
+  try {
+    const manifest = chrome?.runtime?.getManifest?.();
+    if (manifest && manifest.version) {
+      const vEl = document.getElementById('popup-version-label') || document.querySelector('.popup-version');
+      if (vEl) vEl.textContent = 'v' + manifest.version;
+    }
+  } catch (e) {}
+
+  // 1b. Logo fallback handling (CSP-safe, no inline handlers)
   const logoImg = document.getElementById('popup-logo-img');
   const logoSvg = document.getElementById('popup-logo-svg');
   if (logoImg && logoSvg) {
