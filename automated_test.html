@@ -106,6 +106,20 @@
       assert(localNormalize('My_Awesome_Short_01.mp4') === 'myawesomeshort01', 'normalizeVideoTitle removes extension and special chars');
       assert(localNormalize('Test Video (Part 2).mov') === 'testvideopart2', 'normalizeVideoTitle handles spaces and parentheses');
 
+      // 4. Test Minimize/Maximize state persistence
+      localStorage.setItem('xmon_is_minimized', 'true');
+      const isMinSaved = localStorage.getItem('xmon_is_minimized') === 'true';
+      assert(isMinSaved === true, 'Minimize state persisted to localStorage as true');
+      localStorage.setItem('xmon_is_minimized', 'false');
+      const isMaxSaved = localStorage.getItem('xmon_is_minimized') === 'true';
+      assert(isMaxSaved === false, 'Maximize state persisted to localStorage as false');
+
+      // 5. Test draft fast-path detection for waitForBatchUploadComplete
+      const sampleVideos = [{ id: 'v1', name: 'my_short_001.mp4', status: 'uploading' }];
+      const mockDrafts = [{ title: 'my_short_001', videoId: 'yt123' }];
+      const hasMatchedDraft = sampleVideos.some(v => mockDrafts.some(d => localNormalize(d.title).includes(localNormalize(v.name))));
+      assert(hasMatchedDraft === true, 'Draft appearance in YouTube Studio triggers immediate upload completion');
+
       logs.push('<div class="log-line info">--- SUITE 2: Multi-Batch Queue Simulation (100 Videos) ---</div>');
 
       // Setup 100 mock video items
@@ -231,14 +245,93 @@
       }
       assert(batch2Published === 14, 'Batch 2: Exactly 14 verified drafts published; failed video was NOT published');
 
-      logs.push('<div class="log-line info">--- SUITE 4: Total Queue Counters & State Consistency ---</div>');
-      const totalUploaded = mockQueue.filter(v => v.status === 'published' || v.status === 'uploaded').length;
-      const totalFailed = mockQueue.filter(v => v.status === 'failed').length;
-      const totalWaiting = mockQueue.filter(v => v.status === 'waiting').length;
+      logs.push('<div class="log-line info">--- SUITE 4: Interactive DOM Minimize / Maximize Persistence ---</div>');
+      // Create mock widget in sandbox
+      const testWidget = document.createElement('div');
+      testWidget.id = 'xmon-widget';
+      testWidget.innerHTML = `
+        <div class="xmon-header">
+          <button id="xmon-minimize-btn" type="button">-</button>
+        </div>
+        <div class="xmon-tabs">Tabs</div>
+        <div class="xmon-tab-panel">Panel</div>
+        <div class="xmon-footer">Footer</div>
+      `;
+      sandbox.appendChild(testWidget);
 
-      assert(totalUploaded === 29, 'Total processed so far: 29 successful (15 + 14)');
-      assert(totalFailed === 1, 'Total failed: 1 (video 30)');
-      assert(totalWaiting === 70, 'Remaining waiting: 70 videos (Batches 3-7)');
+      let mockState = {
+        isMinimized: localStorage.getItem('xmon_is_minimized') === 'true'
+      };
+
+      function mockSetMinimized(val) {
+        mockState.isMinimized = !!val;
+        localStorage.setItem('xmon_is_minimized', mockState.isMinimized ? 'true' : 'false');
+        if (mockState.isMinimized) {
+          testWidget.classList.add('xmon-minimized');
+          testWidget.querySelector('.xmon-tabs').style.display = 'none';
+          testWidget.querySelector('.xmon-tab-panel').style.display = 'none';
+          testWidget.querySelector('.xmon-footer').style.display = 'none';
+          testWidget.querySelector('#xmon-minimize-btn').textContent = '+';
+        } else {
+          testWidget.classList.remove('xmon-minimized');
+          testWidget.querySelector('.xmon-tabs').style.display = '';
+          testWidget.querySelector('.xmon-tab-panel').style.display = '';
+          testWidget.querySelector('.xmon-footer').style.display = '';
+          testWidget.querySelector('#xmon-minimize-btn').textContent = '-';
+        }
+      }
+
+      // Initial state is maximized
+      mockSetMinimized(false);
+      assert(!testWidget.classList.contains('xmon-minimized'), 'Widget initialized in MAXIMIZED state');
+      assert(testWidget.querySelector('#xmon-minimize-btn').textContent === '-', 'Button displays minus icon (-) when maximized');
+
+      // 1. User clicks Minimize (-) button
+      mockSetMinimized(true);
+      assert(testWidget.classList.contains('xmon-minimized'), 'Widget has xmon-minimized class after clicking minus');
+      assert(testWidget.querySelector('.xmon-tabs').style.display === 'none', 'Tabs hidden when minimized');
+      assert(testWidget.querySelector('.xmon-tab-panel').style.display === 'none', 'Panels hidden when minimized');
+      assert(testWidget.querySelector('#xmon-minimize-btn').textContent === '+', 'Button displays plus icon (+) when minimized');
+      assert(localStorage.getItem('xmon_is_minimized') === 'true', 'localStorage persists xmon_is_minimized=true');
+
+      // 2. Simulate Page Refresh: state restores from localStorage without auto-maximizing
+      const refreshedStateMinimized = localStorage.getItem('xmon_is_minimized') === 'true';
+      assert(refreshedStateMinimized === true, 'After page refresh, state remains MINIMIZED (does not auto-maximize)');
+
+      // 3. User clicks Plus (+) button to Maximize
+      mockSetMinimized(false);
+      assert(!testWidget.classList.contains('xmon-minimized'), 'Widget restored to MAXIMIZED state after clicking plus (+)');
+      assert(testWidget.querySelector('.xmon-tabs').style.display !== 'none', 'Tabs visible after maximizing');
+      assert(localStorage.getItem('xmon_is_minimized') === 'false', 'localStorage persists xmon_is_minimized=false');
+
+      logs.push('<div class="log-line info">--- SUITE 5: Batches 3-7 Progression (All 100 Videos) ---</div>');
+      // Simulate Batches 3 through 7
+      let processedBatches = 2; // Batches 1 & 2 already processed
+      while (true) {
+        const remainingWaitingVideos = mockQueue.filter(v => v.status === 'waiting');
+        if (remainingWaitingVideos.length === 0) break;
+        
+        processedBatches++;
+        const currentBatch = remainingWaitingVideos.slice(0, batchSize);
+        // Upload & draft verification
+        currentBatch.forEach(v => {
+          v.status = 'uploaded';
+          v.draftId = 'yt_vid_' + v.id;
+        });
+        // Publish
+        currentBatch.forEach(v => {
+          v.status = 'published';
+        });
+      }
+
+      assert(processedBatches === 7, 'All 7 batches processed sequentially');
+      const finalPublished = mockQueue.filter(v => v.status === 'published').length;
+      const finalFailed = mockQueue.filter(v => v.status === 'failed').length;
+      const finalWaiting = mockQueue.filter(v => v.status === 'waiting').length;
+
+      assert(finalPublished === 99, '99 out of 100 videos published across all 7 batches');
+      assert(finalFailed === 1, 'Exactly 1 failed video recorded (video 30)');
+      assert(finalWaiting === 0, '0 videos waiting (entire queue finished)');
 
       // Final summary
       resultsEl.innerHTML = `

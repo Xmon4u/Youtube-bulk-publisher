@@ -90,6 +90,19 @@ Youtube-bulk-publisher/
 
 ## Changelog
 
+### v2.7.0 (2026-10-09)
+
+Fixed multi-batch queue stall after first batch and implemented persistent panel minimize/maximize state:
+
+- **Batch Stall Root Cause Fixed**: In `waitForBatchUploadComplete()`, the extension previously waited for up to 6.25 minutes looking only for dialog text flags (`saved as draft`) while YouTube Studio had already transitioned the batch to drafts on the Content page. This caused the first 15 videos to remain frozen in `UPLOADING` state, preventing `closeUploadDialog()`, publishing, and transition to Batch 2.
+- **Direct Content Draft Detection**: Active polling of `findDraftRows()` now verifies drafts directly in YouTube Studio; as soon as batch drafts are saved, the loop terminates immediately and advances to publishing.
+- **Upload Dialog Disappearance Fast-Path**: If YouTube Studio automatically closes the multi-upload modal, the extension detects this immediately instead of waiting out the timeout.
+- **Batch 2+ Transition Stability**: Sequential batch chaining across up to 100 queued videos (15 per batch) with clean transition through Upload -> Draft Verified -> Publish -> Next Batch.
+- **Minimize / Maximize State Persistence**:
+  - Clicking the Minus (`−`) button minimizes the floating widget and displays a Plus (`+`) button.
+  - Clicking the Plus (`+`) button restores the maximized view.
+  - State is saved to `localStorage` and `chrome.storage.local`, persisting through page refreshes, tab switching, and extension reloads without auto-maximizing.
+
 ### v2.2.0 (2026-10-09)
 
 Fixed a critical bug where the extension would freeze after the first batch completed:

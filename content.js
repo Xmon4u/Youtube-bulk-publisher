@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.6.0
+   Content Script v2.7.0
    ============================================================ */
 
 (() => {
@@ -8,7 +8,7 @@
   if (window.__XMON_BULK_PUBLISHER_V2__) return;
   window.__XMON_BULK_PUBLISHER_V2__ = true;
 
-  const EXT_VERSION = chrome?.runtime?.getManifest?.()?.version || '2.6.0';
+  const EXT_VERSION = chrome?.runtime?.getManifest?.()?.version || '2.7.0';
   console.log(`[XMON] Extension v${EXT_VERSION} initialized on YouTube Studio.`);
 
   // ============================================================
@@ -24,6 +24,7 @@
     check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
     x: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
     minus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+    plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
     settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
     film: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>`,
     zap: `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
@@ -298,8 +299,14 @@
     // Active tab
     activeTab: 'upload',
     
-    // UI minimized
-    isMinimized: false,
+    // UI minimized (persisted across reloads)
+    isMinimized: (() => {
+      try {
+        return localStorage.getItem('xmon_is_minimized') === 'true';
+      } catch (e) {
+        return false;
+      }
+    })(),
     
     // Current processing info
     currentVideoName: '',
@@ -554,22 +561,37 @@
     }
   }
 
+  function setMinimized(val) {
+    state.isMinimized = !!val;
+    try {
+      localStorage.setItem('xmon_is_minimized', state.isMinimized ? 'true' : 'false');
+      if (chrome?.storage?.local) {
+        chrome.storage.local.set({ xmon_is_minimized: state.isMinimized });
+      }
+    } catch (e) {}
+    renderUI();
+  }
+
   function restoreQueueState() {
     try {
-      chrome.storage.local.get(['xmonQueueState'], (result) => {
-        if (result.xmonQueueState) {
-          const data = result.xmonQueueState;
-          if (data.config) state.config = { ...state.config, ...data.config };
-          // Restore counters only - files can't be restored from storage
-          state.uploadedCount = data.uploadedCount || 0;
-          state.publishedCount = data.publishedCount || 0;
-          state.failedCount = data.failedCount || 0;
-          state.currentBatch = data.currentBatch || 0;
-          state.totalBatches = data.totalBatches || 0;
-          // Update UI with restored config
+      if (chrome?.storage?.local) {
+        chrome.storage.local.get(['xmonQueueState', 'xmon_is_minimized'], (result) => {
+          if (typeof result.xmon_is_minimized === 'boolean') {
+            state.isMinimized = result.xmon_is_minimized;
+            try { localStorage.setItem('xmon_is_minimized', String(state.isMinimized)); } catch(e) {}
+          }
+          if (result.xmonQueueState) {
+            const data = result.xmonQueueState;
+            if (data.config) state.config = { ...state.config, ...data.config };
+            state.uploadedCount = data.uploadedCount || 0;
+            state.publishedCount = data.publishedCount || 0;
+            state.failedCount = data.failedCount || 0;
+            state.currentBatch = data.currentBatch || 0;
+            state.totalBatches = data.totalBatches || 0;
+          }
           renderUI();
-        }
-      });
+        });
+      }
     } catch (e) {
       console.warn('[XMON] Failed to restore queue state:', e);
     }
@@ -1148,8 +1170,8 @@
   async function waitForBatchUploadComplete(batchCount, currentBatchVideos = []) {
     updateStatus(`Uploading ${batchCount} video(s) to YouTube...`, 'active');
     
-    // Max 3.5 minutes for batch (short videos typically upload in 20-60s)
-    const maxWaitMs = Math.max(batchCount * 25000, 210000);
+    // Max wait: 90 seconds (batch of 15 Shorts normally finishes in 15-40s)
+    const maxWaitMs = Math.min(Math.max(batchCount * 8000, 45000), 90000);
     const start = Date.now();
     let consecutiveDoneCount = 0;
     const trackedVideoIds = new Set();
@@ -1187,7 +1209,39 @@
         }
       }
 
-      // 2. Multi-file items tracking
+      // 2. Direct Content Draft Check: if drafts for this batch are already saved in YouTube Studio
+      const contentDrafts = findDraftRows();
+      if (contentDrafts.length > 0) {
+        let matchedCount = 0;
+        for (const video of currentBatchVideos) {
+          const match = contentDrafts.find(d => isTitleMatching(video.name, d.title));
+          if (match) {
+            matchedCount++;
+            if (video.status === STATUS.UPLOADING) {
+              video.status = STATUS.UPLOADED;
+              video.draftId = match.videoId || match.title;
+              video.draftTitle = match.title;
+              state.uploadedCount++;
+              state.processedIds.add(video.id);
+              trackedVideoIds.add(video.id);
+            }
+          }
+        }
+        if (matchedCount >= Math.min(batchCount, contentDrafts.length) && matchedCount > 0) {
+          console.log(`[XMON] Confirmed ${matchedCount} batch drafts already in YouTube Studio. Exiting wait loop.`);
+          for (const video of currentBatchVideos) {
+            if (video.status === STATUS.UPLOADING) {
+              video.status = STATUS.UPLOADED;
+              state.uploadedCount++;
+              state.processedIds.add(video.id);
+            }
+          }
+          renderUI();
+          return true;
+        }
+      }
+
+      // 3. Multi-file items tracking in active upload dialog
       const fileItems = deepQueryAll('ytcp-uploads-file-item, .upload-item, ytcp-upload-item, [class*="upload-item"]');
       let completedInDom = 0;
       let failedInDom = 0;
@@ -1197,6 +1251,7 @@
           const itemText = (item.textContent || '').toLowerCase();
           const isDone = itemText.includes('complete') ||
                          itemText.includes('saved as draft') ||
+                         itemText.includes('draft') ||
                          itemText.includes('processing') ||
                          itemText.includes('checks complete') ||
                          itemText.includes('100%');
@@ -1229,10 +1284,25 @@
         });
       }
 
-      // 3. Check if YouTube Close button is enabled
+      // 4. Check if upload dialog closed / disappeared after grace period
+      const activeUploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+      const dialogDisappeared = !activeUploadDialog || (!isDialogOpen(activeUploadDialog) && !isElementVisible(activeUploadDialog));
+      if (dialogDisappeared && Date.now() - start > 8000) {
+        console.log('[XMON] Upload dialog closed. YouTube has transitioned batch to drafts.');
+        for (const video of currentBatchVideos) {
+          if (video.status === STATUS.UPLOADING) {
+            video.status = STATUS.UPLOADED;
+            state.uploadedCount++;
+            state.processedIds.add(video.id);
+          }
+        }
+        renderUI();
+        return true;
+      }
+
+      // 5. Check if YouTube Close button is enabled & dialog text indicates draft saved
       const closeBtn = isUploadCloseBtnEnabled();
-      const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-      const dialogText = uploadDialog ? (uploadDialog.textContent || '').toLowerCase() : '';
+      const dialogText = activeUploadDialog ? (activeUploadDialog.textContent || '').toLowerCase() : '';
       const isDraftSavedInText = dialogText.includes('saved as draft') ||
                                  dialogText.includes('uploads complete') ||
                                  dialogText.includes('all uploads complete') ||
@@ -1263,7 +1333,6 @@
           }
           updateStatus('Batch upload confirmed. Ready to close dialog...', 'active');
           renderUI();
-          // Do NOT close dialog here - let processQueue handle it after this function returns
           return true;
         }
       } else {
@@ -1273,7 +1342,7 @@
       await sleep(1500);
     }
 
-    console.warn('[XMON] Batch upload wait finished/timed out. Marking remaining as uploaded...');
+    console.warn('[XMON] Batch upload wait grace period reached. Transitioning videos to uploaded for verification...');
     for (const video of currentBatchVideos) {
       if (video.status === STATUS.UPLOADING) {
         video.status = STATUS.UPLOADED;
@@ -1281,7 +1350,6 @@
         state.processedIds.add(video.id);
       }
     }
-    // Do NOT close dialog here - let processQueue handle it
     renderUI();
     return true;
   }
@@ -1626,8 +1694,8 @@
           // Confirm dialog is gone before proceeding
           await waitFor(() => {
             const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
-            return (!d || !isDialogOpen(d)) ? true : null;
-          }, 8000).catch(() => {});
+            return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
+          }, 6000).catch(() => {});
           await sleep(1500);
           
           // Step 5: Draft Verification on YouTube Studio Content page
@@ -1890,8 +1958,20 @@
 
     const widget = document.createElement('div');
     widget.id = 'xmon-widget';
+    if (state.isMinimized) {
+      widget.classList.add('xmon-minimized');
+    }
     widget.innerHTML = buildWidgetHTML();
     document.body.appendChild(widget);
+
+    if (state.isMinimized) {
+      const tabs = widget.querySelector('.xmon-tabs');
+      const panels = widget.querySelectorAll('.xmon-tab-panel');
+      const footer = widget.querySelector('.xmon-footer');
+      if (tabs) tabs.style.display = 'none';
+      panels.forEach(p => p.style.display = 'none');
+      if (footer) footer.style.display = 'none';
+    }
 
     // Hidden file input for click-to-browse
     const fileInput = document.createElement('input');
@@ -1950,7 +2030,7 @@
         </div>
         <div class="xmon-header-controls">
           <button class="xmon-header-btn" id="xmon-minimize-btn" title="${state.isMinimized ? 'Expand' : 'Minimize'}" type="button">
-            ${state.isMinimized ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>` : ICONS.minus}
+            ${state.isMinimized ? ICONS.plus : ICONS.minus}
           </button>
         </div>
       </div>
@@ -2261,12 +2341,11 @@
       });
     }
 
-    // Minimize
+    // Minimize / Maximize toggle with state persistence
     const minBtn = document.getElementById('xmon-minimize-btn');
     if (minBtn) {
       minBtn.onclick = () => {
-        state.isMinimized = !state.isMinimized;
-        renderUI();
+        setMinimized(!state.isMinimized);
       };
     }
 

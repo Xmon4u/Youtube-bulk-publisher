@@ -110,7 +110,15 @@
 #xmon-widget.xmon-minimized {
   width: 290px;
   max-height: 60px;
+  overflow: hidden;
 }
+
+#xmon-widget.xmon-minimized .xmon-tabs,
+#xmon-widget.xmon-minimized .xmon-tab-panel,
+#xmon-widget.xmon-minimized .xmon-footer {
+  display: none !important;
+}
+
 
 /* --- Header --- */
 #xmon-widget .xmon-header {
