@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.4.0
+   Content Script v2.5.0
    ============================================================ */
 
 (() => {
@@ -672,17 +672,38 @@
   // ============================================================
   // Helper: Open YouTube Studio Upload Dialog (handles direct icon and CREATE menu)
   async function openYouTubeUploadDialog() {
-    // 1. Is dialog already open and visible with an active drop zone or loader?
+    // 1. If dialog is already open in ANY state, accept it and return true.
+    //    Only force-close if it's stuck in a post-upload state with no drop zone
+    //    AND no file items (i.e. truly stuck after a previous batch).
     const existingDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
     if (existingDialog && isDialogOpen(existingDialog)) {
-      const dropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
-      if (dropzone && isElementVisible(dropzone)) {
-        console.log('[XMON] Upload dialog is already open and ready for files.');
+      // Check if it has any active upload items (still processing a previous batch)
+      const hasUploadItems = deepQueryAll('ytcp-uploads-file-item, .upload-item', existingDialog).length > 0;
+      const hasDropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
+      const dropzoneVisible = hasDropzone && isElementVisible(hasDropzone);
+
+      if (dropzoneVisible || hasUploadItems) {
+        // Dialog is ready (drop zone visible) or actively uploading — use it as-is
+        console.log('[XMON] Upload dialog already open and usable. Proceeding.');
         return true;
       }
-      console.log('[XMON] Stale dialog detected. Closing to open a fresh dialog...');
+
+      // Dialog is open but appears to be in an idle/stuck state with no drop zone and no items
+      // This happens when the dialog shows the initial empty state without a visible drop target
+      // Try to use it anyway — the file input may still be injected
+      console.log('[XMON] Upload dialog open but drop zone not visible. Attempting to use it anyway.');
+      // Wait a moment to see if drop zone appears
+      await sleep(1200);
+      const refreshedDropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
+      if (refreshedDropzone) {
+        console.log('[XMON] Drop zone appeared after wait. Proceeding.');
+        return true;
+      }
+
+      // Still no drop zone - this dialog is truly stuck. Close and reopen.
+      console.log('[XMON] Dialog stuck with no drop zone. Force closing to reopen...');
       await closeUploadDialog();
-      await sleep(1000);
+      await sleep(2000);
     }
 
     // 2. Try direct upload button / icon on the page
@@ -1001,7 +1022,7 @@
       'ytcp-button#close-button'
     ];
 
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       for (const sel of closeSelectors) {
         const btn = deepQuery(sel);
         if (btn && isElementVisible(btn)) {
@@ -1049,8 +1070,14 @@
 
       // Send Escape key if still open
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
-      await sleep(600);
+      await sleep(800);
     }
+
+    // Final check: wait up to 3s for dialog to fully disappear from DOM
+    await waitFor(() => {
+      const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+      return (!d || !isDialogOpen(d)) ? true : null;
+    }, 3000).catch(() => {});
   }
 
   // ============================================================
@@ -1511,9 +1538,16 @@
           }
 
           // Step 1: Pre-batch cleanup — ensure previous dialogs are 100% closed
+          // Use a longer wait + retry loop to guarantee dialog is gone before batch starts
+          updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Preparing (closing any open dialogs)...`, 'active');
           await closeStuckDialogs(true);
           await closeUploadDialog();
-          await sleep(800);
+          // Wait until no upload dialog is present in the DOM
+          await waitFor(() => {
+            const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+            return (!d || !isDialogOpen(d)) ? true : null;
+          }, 8000).catch(() => {});
+          await sleep(1000);
 
           // Step 2: Inject and upload the batch files to YouTube Studio
           await uploadBatchToYouTube(batchFiles);
@@ -1521,8 +1555,14 @@
           // Step 3: Wait for uploads in the dialog & draft save
           await waitForBatchUploadComplete(expectedUploadCount, currentBatchVideos);
 
-          // Step 4: Close the upload dialog
+          // Step 4: Close the upload dialog and wait for it to be fully gone
+          updateStatus('Closing upload dialog...', 'active');
           await closeUploadDialog();
+          // Confirm dialog is gone before proceeding
+          await waitFor(() => {
+            const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+            return (!d || !isDialogOpen(d)) ? true : null;
+          }, 8000).catch(() => {});
           await sleep(1500);
           
           // Step 5: Draft Verification on YouTube Studio Content page
