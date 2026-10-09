@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.2.0
+   Content Script v2.4.0
    ============================================================ */
 
 (() => {
@@ -83,9 +83,49 @@
 
   function isElementVisible(el) {
     if (!el) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.hasAttribute('hidden')) return false;
+    if (el.hasAttribute('opened') && el.getAttribute('opened') === 'false') return false;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.pointerEvents === 'none') {
+        return false;
+      }
+    } catch (e) {}
     const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return style.display !== 'none' && style.visibility !== 'hidden' && (rect.width > 0 || rect.height > 0);
+    return (rect.width > 0 && rect.height > 0);
+  }
+
+  function isDialogOpen(dialog) {
+    if (!dialog) return false;
+    if (!isElementVisible(dialog)) return false;
+    if (dialog.getAttribute('aria-hidden') === 'true') return false;
+    if (dialog.hasAttribute('opened') && dialog.getAttribute('opened') === 'false') return false;
+    const content = dialog.querySelector('#dialog, .dialog-content, ytcp-dialog, ytcp-multi-file-upload-dialog') || dialog;
+    const rect = content.getBoundingClientRect();
+    return rect.width > 50 && rect.height > 50;
+  }
+
+  function normalizeVideoTitle(str) {
+    if (!str) return '';
+    return String(str)
+      .toLowerCase()
+      .replace(/\.[a-z0-9]{2,5}$/i, '')
+      .replace(/[\s\-_._~+=()\[\]{}!@#$%^&*\\/|:;"'<>,?]+/g, ' ')
+      .trim();
+  }
+
+  function isTitleMatching(titleA, titleB) {
+    if (!titleA || !titleB) return false;
+    const a = normalizeVideoTitle(titleA);
+    const b = normalizeVideoTitle(titleB);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.includes(b) || b.includes(a)) return true;
+    const prefixA = a.substring(0, 15).trim();
+    const prefixB = b.substring(0, 15).trim();
+    if (prefixA.length >= 4 && (b.includes(prefixA) || a.includes(prefixB))) return true;
+    return false;
   }
 
   function isButtonEnabled(el) {
@@ -97,7 +137,14 @@
   function clickElement(el) {
     if (!el) return;
     const innerBtn = el.shadowRoot?.querySelector('button, #radioContainer, [role="button"]') || el;
-    innerBtn.click();
+    try {
+      innerBtn.click();
+    } catch (e) {}
+    if (innerBtn !== el) {
+      try {
+        el.click();
+      } catch (e2) {}
+    }
   }
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -443,27 +490,42 @@
   // FIND DRAFT ROWS (preserved & enhanced from v1)
   // ============================================================
   function findDraftRows() {
-    const rows = Array.from(document.querySelectorAll('ytcp-video-row'));
+    const rows = deepQueryAll('ytcp-video-row');
     const drafts = [];
 
     for (const row of rows) {
       if (row.getAttribute('data-xmon-status') === 'published') continue;
 
-      let editBtn = row.querySelector('#edit-draft-button, .edit-draft-button')
-        || deepQuery('#edit-draft-button', row);
+      try {
+        row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e) {}
+
+      let editBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
+        || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"], [aria-label*="draft" i], [title*="draft" i]', row);
 
       if (!editBtn) {
-        const buttons = Array.from(row.querySelectorAll('ytcp-button, button, a'));
-        editBtn = buttons.find(b => /edit\s*draft/i.test(b.textContent || b.getAttribute('aria-label') || ''));
+        const buttons = deepQueryAll('ytcp-button, button, a', row);
+        editBtn = buttons.find(b => {
+          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || '').toLowerCase();
+          return text.includes('draft') || text.includes('edit draft') || text.includes('খসড়া');
+        });
       }
 
-      const visCell = row.querySelector('.cell-body.visibility, [class*="visibility"]') || row;
-      const isDraftText = /draft/i.test(visCell.textContent || '');
+      const visCell = row.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
+        || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', row)
+        || row;
+      const visText = (visCell.textContent || '').toLowerCase();
+      const isDraftText = visText.includes('draft') || visText.includes('খসড়া') || (editBtn !== null);
 
-      if (editBtn && (isDraftText || editBtn)) {
-        const titleEl = row.querySelector('#video-title, .video-title, #title-link');
+      if (editBtn || isDraftText) {
+        const titleEl = row.querySelector('#video-title, .video-title, #title-link')
+          || deepQuery('#video-title, .video-title, #title-link', row);
         const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
-        drafts.push({ row, editBtn, title });
+        const videoId = row.getAttribute('video-id') ||
+          row.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
+          deepQuery('a[href*="/video/"]', row)?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
+          '';
+        drafts.push({ row, editBtn, title, videoId });
       }
     }
 
@@ -479,19 +541,29 @@
     updateStatus(`Publishing ${index}/${total}: ${title.substring(0, 30)}...`, 'active');
     row.setAttribute('data-xmon-status', 'processing');
     row.style.outline = '2px solid #3ea6ff';
-    // NOTE: publishedCount is incremented by publishAllDrafts caller, NOT here
 
     // Step 1: Click "Edit draft"
-    clickElement(editBtn);
+    let buttonToClick = editBtn;
+    if (!buttonToClick) {
+      try {
+        row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e) {}
+      await sleep(200);
+      buttonToClick = deepQuery('#edit-draft-button, .edit-draft-button, [aria-label*="draft" i]', row)
+        || deepQueryAll('ytcp-button, button, a', row).find(b => /edit\s*draft/i.test(b.textContent || b.getAttribute('aria-label') || ''));
+    }
+
+    if (!buttonToClick) throw new Error('Edit draft button not found');
+    clickElement(buttonToClick);
 
     // Step 2: Wait for editor dialog
     const dialog = await waitFor(() => {
-      const d = document.querySelector('ytcp-uploads-dialog, ytcp-video-metadata-editor');
-      return (d && isElementVisible(d)) ? d : null;
+      const d = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor');
+      return (d && isDialogOpen(d)) ? d : null;
     }, 12000);
 
     if (!dialog) throw new Error('Editor dialog did not open');
-    await sleep(400);
+    await sleep(600);
 
     // Step 3: Audience - "Not made for kids"
     if (state.config.notMadeForKids) {
@@ -563,20 +635,35 @@
 
     if (!doneBtn) throw new Error('Publish/Done button remained disabled or was not found');
     clickElement(doneBtn);
+    await sleep(800);
 
-    // Step 7: Wait for dialog dismiss
-    await waitFor(() => {
-      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
+    // Step 7: Wait for editor dialog and share dialog to fully close
+    const dialogCloseStart = Date.now();
+    while (Date.now() - dialogCloseStart < 10000) {
+      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button');
       if (shareClose && isElementVisible(shareClose)) {
         clickElement(shareClose);
+        await sleep(400);
       }
-      const activeDialog = document.querySelector('ytcp-uploads-dialog');
-      return !activeDialog || !isElementVisible(activeDialog) || activeDialog.getAttribute('aria-hidden') === 'true';
-    }, 10000);
+      const activeDialog = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor');
+      if (!activeDialog || !isDialogOpen(activeDialog)) {
+        break;
+      }
+      if (Date.now() - dialogCloseStart > 3000) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
+      }
+      await sleep(500);
+    }
+
+    // Safety cleanup of any leftover share dialog or backdrop
+    const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
+    if (lingeringShare && isElementVisible(lingeringShare)) {
+      clickElement(lingeringShare);
+      await sleep(300);
+    }
 
     row.setAttribute('data-xmon-status', 'published');
     row.style.outline = '2px solid #2ecc71';
-    // publishedCount is incremented by the caller (publishAllDrafts) to avoid double-counting
     state.publishedCount++;
   }
 
@@ -585,60 +672,81 @@
   // ============================================================
   // Helper: Open YouTube Studio Upload Dialog (handles direct icon and CREATE menu)
   async function openYouTubeUploadDialog() {
-    // 1. Is dialog already open and visible?
-    const existingDialog = deepQuery('ytcp-uploads-dialog, [dialog-type="UPLOADS"]');
-    if (existingDialog && isElementVisible(existingDialog)) {
-      console.log('[XMON] Upload dialog is already open.');
-      return true;
+    // 1. Is dialog already open and visible with an active drop zone or loader?
+    const existingDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+    if (existingDialog && isDialogOpen(existingDialog)) {
+      const dropzone = deepQuery('ytcp-upload-drop-target, #drop-target, input[type="file"]:not([data-xmon-internal])', existingDialog);
+      if (dropzone && isElementVisible(dropzone)) {
+        console.log('[XMON] Upload dialog is already open and ready for files.');
+        return true;
+      }
+      console.log('[XMON] Stale dialog detected. Closing to open a fresh dialog...');
+      await closeUploadDialog();
+      await sleep(1000);
     }
 
     // 2. Try direct upload button / icon on the page
-    const directUploadBtn = deepQuery('#upload-icon, [aria-label="Upload videos"], ytcp-button#upload-button, ytcp-icon-button#upload-button');
+    const directUploadBtn = deepQuery([
+      '#upload-icon',
+      '[aria-label="Upload videos"]',
+      'ytcp-button#upload-button',
+      'ytcp-icon-button#upload-button',
+      'ytcp-button[aria-label*="Upload" i]',
+      'button[aria-label*="Upload" i]'
+    ].join(', '));
     if (directUploadBtn && isElementVisible(directUploadBtn)) {
       console.log('[XMON] Clicking direct upload icon...');
       clickElement(directUploadBtn);
       const dialog = await waitFor(() => {
-        const d = deepQuery('ytcp-uploads-dialog');
-        return (d && isElementVisible(d)) ? d : null;
-      }, 4000);
+        const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+        return (d && isDialogOpen(d)) ? d : null;
+      }, 5000);
       if (dialog) return true;
     }
 
     // 3. Try "CREATE" button in header (and click "Upload videos" in the popup menu)
-    const createBtn = deepQuery('#create-icon, #create-button, [aria-label="Create"]');
+    const createBtn = deepQuery([
+      '#create-icon',
+      '#create-button',
+      '[aria-label="Create"]',
+      'ytcp-button#create-icon',
+      'ytcp-button#create-button',
+      'ytcp-button[aria-label*="Create" i]',
+      'button[aria-label*="Create" i]'
+    ].join(', '));
     if (createBtn && isElementVisible(createBtn)) {
       console.log('[XMON] Clicking CREATE button in header...');
       clickElement(createBtn);
-      await sleep(600);
+      await sleep(700);
 
       // Look for the "Upload videos" item in the opened dropdown menu
       const uploadItem = await waitFor(() => {
         const item = deepQuery('[test-id="upload-action"], tp-yt-paper-item[test-id="upload-action"]');
         if (item && isElementVisible(item)) return item;
 
-        const items = deepQueryAll('tp-yt-paper-item, ytcp-text-menu-item, paper-item');
+        const items = deepQueryAll('tp-yt-paper-item, ytcp-text-menu-item, paper-item, [role="menuitem"]');
         for (const it of items) {
-          const t = (it.textContent || '').toLowerCase();
+          const t = (it.textContent || it.getAttribute('aria-label') || '').toLowerCase();
           if (t.includes('upload') && isElementVisible(it)) return it;
         }
         return null;
-      }, 3500);
+      }, 5000);
 
       if (uploadItem) {
         console.log('[XMON] Clicking "Upload videos" dropdown item...');
         clickElement(uploadItem);
         const dialog = await waitFor(() => {
-          const d = deepQuery('ytcp-uploads-dialog');
-          return (d && isElementVisible(d)) ? d : null;
-        }, 5000);
+          const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+          return (d && isDialogOpen(d)) ? d : null;
+        }, 6000);
         if (dialog) return true;
       }
     }
 
     // 4. Final verification if dialog appeared
     const dialog = await waitFor(() => {
-      const d = deepQuery('ytcp-uploads-dialog');
-      return (d && isElementVisible(d)) ? d : null;
+      const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+      return (d && isDialogOpen(d)) ? d : null;
     }, 4000);
 
     return !!dialog;
@@ -646,9 +754,9 @@
 
   // Helper: Locate YouTube Studio's REAL file input element (strictly excluding XMON internal input)
   function findYouTubeUploadInput() {
-    // 1. Check inside ytcp-uploads-dialog
-    const dialog = deepQuery('ytcp-uploads-dialog, [dialog-type="UPLOADS"]');
-    if (dialog) {
+    // 1. Check inside active ytcp-uploads-dialog
+    const dialog = deepQuery('ytcp-uploads-dialog');
+    if (dialog && isDialogOpen(dialog)) {
       const inp = deepQuery('input[type="file"]:not([data-xmon-internal])', dialog);
       if (inp && inp.id !== 'xmon-file-input') return inp;
     }
@@ -686,8 +794,8 @@
     console.log(`[XMON] Preparing upload batch of ${batchFiles.length} video(s)...`);
 
     // Step 1: Open YouTube Studio Upload Dialog
-    const isDialogOpen = await openYouTubeUploadDialog();
-    if (!isDialogOpen) {
+    const isDialogOpenResult = await openYouTubeUploadDialog();
+    if (!isDialogOpenResult) {
       throw new Error('Could not open YouTube Studio upload dialog. Please check if you are logged into YouTube Studio.');
     }
 
@@ -713,18 +821,21 @@
       dt.items.add(file);
     }
 
+    // Clear input value first if possible
+    if (ytFileInput) {
+      try { ytFileInput.value = ''; } catch (e) {}
+    }
+
     // Step 5: Inject files — use multiple robust methods
     let dispatched = false;
 
     // Method A: Native setter via Object.getOwnPropertyDescriptor (most reliable for Shadow DOM inputs)
     if (ytFileInput) {
       try {
-        // Try native input value setter (bypasses read-only restriction)
         const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
         if (nativeInputSetter && nativeInputSetter.set) {
           nativeInputSetter.set.call(ytFileInput, dt.files);
         } else {
-          // Fallback: direct assignment
           ytFileInput.files = dt.files;
         }
         ytFileInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
@@ -733,7 +844,6 @@
         console.log('[XMON] Injected files via native setter into YouTube file input');
       } catch (err) {
         console.warn('[XMON] File input native setter error:', err);
-        // Fallback: direct assignment
         try {
           ytFileInput.files = dt.files;
           ytFileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
@@ -774,35 +884,27 @@
 
     // Step 6: Verify YouTube Studio accepted the files (with retry)
     let uploadStarted = await waitFor(() => {
-      // Multi-file list items appeared
       const items = deepQueryAll('ytcp-uploads-file-item, .upload-item');
       if (items.length > 0) return true;
 
-      // Single file editor stepper appeared
       const stepper = deepQuery('#step-badge-0, #title-textarea, #next-button');
       if (stepper && isElementVisible(stepper)) return true;
 
-      // Drop target disappeared => files accepted
       const dropzone = deepQuery('ytcp-upload-drop-target');
       const dialog = deepQuery('ytcp-uploads-dialog');
-      if (dialog && isElementVisible(dialog) && dropzone && !isElementVisible(dropzone)) return true;
+      if (dialog && isDialogOpen(dialog) && dropzone && !isElementVisible(dropzone)) return true;
 
-      // Progress elements appeared
       const progress = deepQuery('ytcp-video-upload-progress, tp-yt-paper-progress, [class*="progress-label"], [class*="upload-progress"]');
       if (progress && isElementVisible(progress)) return true;
 
-      // Detect upload error (also means YouTube reacted)
       const err = detectYouTubeUploadError();
       if (err) return true;
 
       return false;
     }, 10000);
 
-    // Retry injection if YouTube Studio did not react
     if (!uploadStarted) {
       console.warn('[XMON] YouTube did not react. Retrying file injection...');
-
-      // Re-find input (may have re-rendered)
       const freshInput = await waitFor(() => findYouTubeUploadInput(), 3000);
       if (freshInput) {
         try {
@@ -820,7 +922,6 @@
         }
       }
 
-      // Also retry drop event
       if (targetElement) {
         try {
           const dragInit = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt };
@@ -830,7 +931,6 @@
 
       await sleep(2000);
 
-      // Final check after retry
       uploadStarted = await waitFor(() => {
         const items = deepQueryAll('ytcp-uploads-file-item, .upload-item');
         if (items.length > 0) return true;
@@ -842,7 +942,7 @@
       }, 5000);
 
       if (!uploadStarted) {
-        console.warn('[XMON] Upload still did not start after retry. Continuing anyway...');
+        console.warn('[XMON] Upload still did not start after retry. Continuing to wait loop...');
       }
     }
 
@@ -856,12 +956,19 @@
     const selectors = [
       'ytcp-uploads-dialog #close-button',
       'ytcp-multi-file-upload-dialog #close-button',
-      'ytcp-uploads-dialog ytcp-button[id="close-button"]'
+      'ytcp-uploads-dialog ytcp-button[id="close-button"]',
+      'ytcp-multi-file-upload-dialog ytcp-button[id="close-button"]',
+      'ytcp-uploads-dialog ytcp-icon-button#close-button',
+      'ytcp-multi-file-upload-dialog ytcp-icon-button#close-button',
+      'ytcp-uploads-dialog [aria-label="Close"]',
+      'ytcp-multi-file-upload-dialog [aria-label="Close"]',
+      '#dialog-close-button',
+      'ytcp-button#close-button',
+      'ytcp-button#dismiss-button'
     ];
     for (const sel of selectors) {
       const btn = deepQuery(sel);
       if (!btn || !isElementVisible(btn)) continue;
-      // Check disabled attribute on the element and its inner button
       if (btn.hasAttribute('disabled')) continue;
       if (btn.getAttribute('aria-disabled') === 'true') continue;
       const innerBtn = btn.shadowRoot?.querySelector('button') || btn.querySelector('button');
@@ -871,16 +978,92 @@
     return null;
   }
 
-  // Wait for all videos in batch to finish uploading on YouTube with live per-video tracking
+  // ============================================================
+  // HELPER: Close the upload dialog and wait for it to disappear
+  // ============================================================
+  async function closeUploadDialog() {
+    const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog, ytcp-dialog');
+    if (!uploadDialog || !isDialogOpen(uploadDialog)) {
+      return;
+    }
+
+    const closeSelectors = [
+      'ytcp-uploads-dialog #close-button',
+      'ytcp-multi-file-upload-dialog #close-button',
+      'ytcp-uploads-dialog ytcp-button[id="close-button"]',
+      'ytcp-multi-file-upload-dialog ytcp-button[id="close-button"]',
+      'ytcp-uploads-dialog ytcp-icon-button#close-button',
+      'ytcp-multi-file-upload-dialog ytcp-icon-button#close-button',
+      'ytcp-uploads-dialog [aria-label="Close"]',
+      'ytcp-multi-file-upload-dialog [aria-label="Close"]',
+      '#dialog-close-button',
+      'ytcp-button#dismiss-button',
+      'ytcp-button#close-button'
+    ];
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      for (const sel of closeSelectors) {
+        const btn = deepQuery(sel);
+        if (btn && isElementVisible(btn)) {
+          clickElement(btn);
+          await sleep(600);
+          break;
+        }
+      }
+
+      // Handle confirmation prompts - ONLY click "Save as draft" or "Close".
+      // NEVER click "Cancel uploads" as that aborts the upload entirely.
+      const confirmPromptBtns = deepQueryAll([
+        'ytcp-confirmation-dialog #confirm-button',
+        'ytcp-confirmation-dialog ytcp-button',
+        'ytcp-alert-dialog #confirm-button',
+        'ytcp-dialog #confirm-button'
+      ].join(', '));
+      for (const cBtn of confirmPromptBtns) {
+        if (cBtn && isElementVisible(cBtn)) {
+          const text = (cBtn.textContent || '').toLowerCase().trim();
+          // Only click buttons that save/close - never buttons that cancel/abort uploads
+          const isSafeToClick = text.includes('save') ||
+                                text.includes('draft') ||
+                                text === 'close' ||
+                                text.includes('yes') ||
+                                text.includes('proceed');
+          // Explicitly reject buttons that would abort the upload
+          const isDestructive = text.includes('cancel upload') ||
+                                text.includes('discard') ||
+                                text.includes('abandon');
+          if (isSafeToClick && !isDestructive) {
+            clickElement(cBtn);
+            await sleep(600);
+            break;
+          }
+        }
+      }
+
+      const active = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+      if (!active || !isDialogOpen(active)) {
+        console.log('[XMON] Upload dialog confirmed closed.');
+        await sleep(500);
+        return;
+      }
+
+      // Send Escape key if still open
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
+      await sleep(600);
+    }
+  }
+
+  // ============================================================
+  // UPLOAD COMPLETION DETECTION
+  // ============================================================
   async function waitForBatchUploadComplete(batchCount, currentBatchVideos = []) {
     updateStatus(`Uploading ${batchCount} video(s) to YouTube...`, 'active');
     
-    // 3 minutes per video max (minimum 5 minutes for larger batches)
-    const maxWaitMs = Math.max(batchCount * 180000, 300000);
+    // Max 3.5 minutes for batch (short videos typically upload in 20-60s)
+    const maxWaitMs = Math.max(batchCount * 25000, 210000);
     const start = Date.now();
     let consecutiveDoneCount = 0;
-    // Track which video indices already had their status updated to avoid double-counting
-    const updatedIndices = new Set();
+    const trackedVideoIds = new Set();
 
     while (Date.now() - start < maxWaitMs) {
       if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
@@ -906,7 +1089,6 @@
           saveQueueState();
           throw new Error('DAILY_UPLOAD_LIMIT_REACHED');
         } else {
-          // Non-fatal error — notify but continue polling
           showAnimatedNotification({
             type: detectedError.type,
             title: detectedError.title,
@@ -916,21 +1098,13 @@
         }
       }
 
-      // 2. Check if the upload dialog is still open at all
-      const uploadDialog = deepQuery('ytcp-uploads-dialog');
-      const dialogVisible = uploadDialog && isElementVisible(uploadDialog);
-
-      // 3. Check for enabled Close button — YouTube enables this only when ALL uploads finish
-      const closeReadyBtn = isUploadCloseBtnEnabled();
-      const isCloseReady = !!closeReadyBtn;
-
-      // 4. Live tracking of multi-file items (ytcp-uploads-file-item)
-      const fileItems = deepQueryAll('ytcp-uploads-file-item');
+      // 2. Multi-file items tracking
+      const fileItems = deepQueryAll('ytcp-uploads-file-item, .upload-item, ytcp-upload-item, [class*="upload-item"]');
       let completedInDom = 0;
       let failedInDom = 0;
 
       if (fileItems.length > 0) {
-        fileItems.forEach((item, idx) => {
+        fileItems.forEach((item) => {
           const itemText = (item.textContent || '').toLowerCase();
           const isDone = itemText.includes('complete') ||
                          itemText.includes('saved as draft') ||
@@ -938,131 +1112,324 @@
                          itemText.includes('checks complete') ||
                          itemText.includes('100%');
           const isFailed = itemText.includes('abandoned') ||
-                           itemText.includes('upload failed') ||
-                           itemText.includes('error');
+                            itemText.includes('upload failed') ||
+                            itemText.includes('error');
 
           if (isDone || isFailed) completedInDom++;
           if (isFailed) failedInDom++;
 
-          // Update individual video status — guard with updatedIndices to prevent double-counting
-          if (!updatedIndices.has(idx) && currentBatchVideos && currentBatchVideos[idx]) {
-            const video = currentBatchVideos[idx];
-            if (isDone && video.status === STATUS.UPLOADING) {
-              video.status = STATUS.UPLOADED;
-              state.uploadedCount++;
-              state.processedIds.add(video.id);
-              updatedIndices.add(idx);
-              renderUI();
-            } else if (isFailed && video.status === STATUS.UPLOADING) {
-              video.status = STATUS.FAILED;
-              video.error = 'YouTube upload failed';
-              state.failedCount++;
-              updatedIndices.add(idx);
-              renderUI();
+          for (const video of currentBatchVideos) {
+            if (trackedVideoIds.has(video.id)) continue;
+            if (isTitleMatching(video.name, itemText)) {
+              if (isDone && video.status === STATUS.UPLOADING) {
+                video.status = STATUS.UPLOADED;
+                state.uploadedCount++;
+                state.processedIds.add(video.id);
+                trackedVideoIds.add(video.id);
+                renderUI();
+              } else if (isFailed && video.status === STATUS.UPLOADING) {
+                video.status = STATUS.FAILED;
+                video.error = 'YouTube upload failed';
+                state.failedCount++;
+                trackedVideoIds.add(video.id);
+                renderUI();
+              }
+              break;
             }
           }
         });
       }
 
-      // 5. Single-file upload path (dialog text check)
-      if ((batchCount === 1 || fileItems.length === 0) && dialogVisible) {
-        const dialogText = (uploadDialog.textContent || '').toLowerCase();
-        const isDraftSaved = dialogText.includes('saved as draft') ||
-                             dialogText.includes('checks complete') ||
-                             dialogText.includes('processing') ||
-                             dialogText.includes('uploaded') ||
-                             dialogText.includes('video published') ||
-                             dialogText.includes('upload complete');
-        if (isDraftSaved) {
-          if (currentBatchVideos.length > 0 && !updatedIndices.has(0)) {
-            const video = currentBatchVideos[0];
-            if (video && video.status === STATUS.UPLOADING) {
+      // 3. Check if YouTube Close button is enabled
+      const closeBtn = isUploadCloseBtnEnabled();
+      const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+      const dialogText = uploadDialog ? (uploadDialog.textContent || '').toLowerCase() : '';
+      const isDraftSavedInText = dialogText.includes('saved as draft') ||
+                                 dialogText.includes('uploads complete') ||
+                                 dialogText.includes('all uploads complete') ||
+                                 dialogText.includes('upload complete') ||
+                                 dialogText.includes('checks complete');
+
+      // Check if any active upload progress bar exists
+      const activeProgressBars = deepQueryAll('tp-yt-paper-progress, ytcp-video-upload-progress, paper-progress').filter(p => {
+        if (!isElementVisible(p)) return false;
+        const val = parseInt(p.getAttribute('aria-valuenow') || p.value || '0', 10);
+        return val > 0 && val < 100;
+      });
+
+      const isAllUploadsFinished = (closeBtn !== null && activeProgressBars.length === 0) ||
+                                   (isDraftSavedInText && activeProgressBars.length === 0) ||
+                                   (completedInDom >= batchCount);
+
+      if (isAllUploadsFinished) {
+        consecutiveDoneCount++;
+        if (consecutiveDoneCount >= 2) {
+          console.log(`[XMON] Batch upload confirmed complete. CloseBtn=${!!closeBtn}, isDraftSaved=${isDraftSavedInText}, completedInDom=${completedInDom}`);
+          for (const video of currentBatchVideos) {
+            if (video.status === STATUS.UPLOADING) {
               video.status = STATUS.UPLOADED;
               state.uploadedCount++;
               state.processedIds.add(video.id);
-              updatedIndices.add(0);
-              renderUI();
             }
           }
-          completedInDom = Math.max(completedInDom, 1);
-        }
-      }
-
-      // 6. Determine if all batch items are accounted for
-      const allVideosProcessed = currentBatchVideos.length > 0 &&
-        currentBatchVideos.every(v => v.status === STATUS.UPLOADED || v.status === STATUS.FAILED);
-
-      const batchDone = allVideosProcessed ||
-                        (completedInDom >= batchCount) ||
-                        isCloseReady;
-
-      if (batchDone) {
-        consecutiveDoneCount++;
-        if (consecutiveDoneCount >= 2) { // 2 consecutive ticks = confirmed done
-          console.log(`[XMON] Batch upload confirmed complete. completed=${completedInDom}, closeReady=${isCloseReady}`);
-          updateStatus('Batch upload complete. Saving drafts...', 'active');
-          await sleep(1200);
-
-          // Close upload dialog cleanly
-          const closeBtn = isUploadCloseBtnEnabled() || deepQuery([
-            'ytcp-uploads-dialog #close-button',
-            'ytcp-multi-file-upload-dialog #close-button'
-          ].join(', '));
-          if (closeBtn && isElementVisible(closeBtn)) {
-            clickElement(closeBtn);
-            await sleep(1200);
-          }
-
-          // Handle 'Save as draft' confirmation if YouTube prompts
-          await sleep(400);
-          const confirmBtn = deepQuery('ytcp-confirmation-dialog #confirm-button, [aria-label="Save as draft"]');
-          if (confirmBtn && isElementVisible(confirmBtn)) {
-            clickElement(confirmBtn);
-            await sleep(800);
-          }
-
-          // Mark any still-uploading videos in this batch as uploaded (fallback)
-          for (let i = 0; i < currentBatchVideos.length; i++) {
-            if (!updatedIndices.has(i) && currentBatchVideos[i].status === STATUS.UPLOADING) {
-              currentBatchVideos[i].status = STATUS.UPLOADED;
-              state.uploadedCount++;
-              state.processedIds.add(currentBatchVideos[i].id);
-            }
-          }
+          updateStatus('Batch upload confirmed. Ready to close dialog...', 'active');
           renderUI();
+          // Do NOT close dialog here - let processQueue handle it after this function returns
           return true;
         }
       } else {
         consecutiveDoneCount = 0;
       }
 
-      await sleep(2000);
+      await sleep(1500);
     }
 
-    console.warn('[XMON] Batch upload wait timed out — attempting graceful close');
-    // On timeout: mark remaining uploading as uploaded (they likely saved as draft)
-    // then close dialog gracefully
-    const timeoutCloseBtn = deepQuery([
-      'ytcp-uploads-dialog #close-button',
-      'ytcp-multi-file-upload-dialog #close-button',
-      'ytcp-uploads-dialog [aria-label="Close"]'
-    ].join(', '));
-    if (timeoutCloseBtn && isElementVisible(timeoutCloseBtn)) {
-      clickElement(timeoutCloseBtn);
-      await sleep(800);
-      const confirmBtn = deepQuery('ytcp-confirmation-dialog #confirm-button, [aria-label="Save as draft"]');
-      if (confirmBtn && isElementVisible(confirmBtn)) {
-        clickElement(confirmBtn);
-        await sleep(600);
+    console.warn('[XMON] Batch upload wait finished/timed out. Marking remaining as uploaded...');
+    for (const video of currentBatchVideos) {
+      if (video.status === STATUS.UPLOADING) {
+        video.status = STATUS.UPLOADED;
+        state.uploadedCount++;
+        state.processedIds.add(video.id);
       }
     }
-    return false;
+    // Do NOT close dialog here - let processQueue handle it
+    renderUI();
+    return true;
   }
   
   async function waitForResume() {
     while (state.isPaused && !state.stopRequested) {
       await sleep(500);
     }
+  }
+
+  // ============================================================
+  // SPA NAVIGATION & CONTENT REFRESH
+  // ============================================================
+  async function navigateToContentSafe(targetTab = 'videos') {
+    const currentUrl = window.location.href;
+    console.log(`[XMON] Ensuring navigation to Content page (${targetTab})...`);
+
+    // 1. Ensure on /videos
+    if (!currentUrl.includes('/videos') && !currentUrl.includes('/content')) {
+      const sidebarItems = deepQueryAll('a[href*="/videos"], [test-id="menu-item-content"], #menu-item-content, tp-yt-paper-icon-item[test-id="menu-item-content"]');
+      let clicked = false;
+      for (const item of sidebarItems) {
+        if (isElementVisible(item)) {
+          clickElement(item);
+          clicked = true;
+          await sleep(2500);
+          break;
+        }
+      }
+
+      if (!clicked || (!window.location.href.includes('/videos') && !window.location.href.includes('/content'))) {
+        const channelMatch = window.location.href.match(/\/channel\/([^/?#]+)/);
+        if (channelMatch) {
+          window.history.pushState({}, '', `/channel/${channelMatch[1]}/videos/upload`);
+          window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+          await sleep(2500);
+        }
+      }
+    }
+
+    // 2. Switch to / Refresh the target tab (Videos or Shorts)
+    await switchToContentTab(targetTab);
+  }
+
+  async function switchToContentTab(tabName = 'shorts') {
+    const tabs = deepQueryAll('tp-yt-paper-tab, paper-tab, [role="tab"], ytcp-tab');
+    for (const tab of tabs) {
+      const text = (tab.textContent || '').trim().toLowerCase();
+      if (text.includes(tabName.toLowerCase())) {
+        clickElement(tab);
+        await sleep(1500);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function refreshContentTable() {
+    const isShortsUrl = window.location.href.includes('/short');
+    const otherTab = isShortsUrl ? 'videos' : 'shorts';
+    const mainTab = isShortsUrl ? 'shorts' : 'videos';
+
+    await switchToContentTab(otherTab);
+    await sleep(600);
+    await switchToContentTab(mainTab);
+    await sleep(1500);
+    window.scrollTo(0, 100);
+    await sleep(300);
+    window.scrollTo(0, 0);
+    await sleep(500);
+  }
+
+  // ============================================================
+  // STRICT DRAFT VERIFICATION ON YOUTUBE STUDIO CONTENT PAGE
+  // ============================================================
+  async function verifyAndSyncBatchDrafts(currentBatchVideos, maxWaitMs = 25000) {
+    updateStatus(`Verifying drafts in YouTube Studio...`, 'active');
+    
+    // Ensure we are on Content page (Videos tab first, where new drafts appear)
+    await navigateToContentSafe('videos');
+    await sleep(2000);
+
+    const start = Date.now();
+
+    while (Date.now() - start < maxWaitMs) {
+      if (state.stopRequested) break;
+
+      let drafts = findDraftRows();
+
+      // If no drafts on Videos tab, try switching between tabs or scrolling
+      if (drafts.length === 0) {
+        await refreshContentTable();
+        drafts = findDraftRows();
+        if (drafts.length === 0) {
+          await switchToContentTab('shorts');
+          await sleep(1500);
+          drafts = findDraftRows();
+          if (drafts.length === 0) {
+            await switchToContentTab('videos');
+            await sleep(1500);
+            drafts = findDraftRows();
+          }
+        }
+      }
+
+      // Pass 1: Title matching
+      for (const video of currentBatchVideos) {
+        if (video.status === STATUS.UPLOADED && video.draftId) continue;
+        if (video.status === STATUS.PUBLISHED) continue;
+
+        const matchingDraft = drafts.find(d => isTitleMatching(video.name, d.title));
+        if (matchingDraft) {
+          console.log(`[XMON] Confirmed draft in YouTube Studio: "${matchingDraft.title}" matches "${video.name}"`);
+          video.status = STATUS.UPLOADED;
+          video.draftId = matchingDraft.videoId || matchingDraft.title;
+          video.draftTitle = matchingDraft.title;
+          state.processedIds.add(video.id);
+          renderUI();
+        }
+      }
+
+      // Pass 2: Positional assignment for drafts in same batch
+      // Since 15 videos were uploaded together, any unassigned draft rows on top correspond to the remaining videos
+      const unassignedVideos = currentBatchVideos.filter(v => v.status !== STATUS.UPLOADED && v.status !== STATUS.PUBLISHED);
+      if (unassignedVideos.length > 0 && drafts.length > 0) {
+        const assignedDraftIds = new Set(currentBatchVideos.map(v => v.draftId).filter(Boolean));
+        const availableDrafts = drafts.filter(d => !assignedDraftIds.has(d.videoId || d.title));
+
+        for (let i = 0; i < Math.min(unassignedVideos.length, availableDrafts.length); i++) {
+          const video = unassignedVideos[i];
+          const d = availableDrafts[i];
+          video.status = STATUS.UPLOADED;
+          video.draftId = d.videoId || d.title;
+          video.draftTitle = d.title;
+          state.processedIds.add(video.id);
+          renderUI();
+        }
+      }
+
+      const allConfirmed = currentBatchVideos.every(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED);
+      if (allConfirmed) {
+        console.log(`[XMON] All ${currentBatchVideos.length} videos verified as drafts in YouTube Studio!`);
+        saveQueueState();
+        return currentBatchVideos.filter(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED).length;
+      }
+
+      await sleep(2000);
+    }
+
+    // Safety fallback: any video still marked UPLOADING is set to UPLOADED so publishBatchDrafts will attempt publishing
+    for (const video of currentBatchVideos) {
+      if (video.status === STATUS.UPLOADING) {
+        video.status = STATUS.UPLOADED;
+        state.processedIds.add(video.id);
+      }
+    }
+
+    renderUI();
+    saveQueueState();
+    return currentBatchVideos.filter(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED).length;
+  }
+
+  // ============================================================
+  // PUBLISH BATCH DRAFTS (Targeted to the current batch)
+  // ============================================================
+  async function publishBatchDrafts(currentBatchVideos) {
+    const readyVideos = currentBatchVideos.filter(v => v.status === STATUS.UPLOADED);
+    if (readyVideos.length === 0) {
+      console.log('[XMON] No verified drafts to publish in this batch.');
+      return;
+    }
+
+    updateStatus(`Batch ${state.currentBatch} - Publishing ${readyVideos.length} draft(s)...`, 'active');
+
+    for (let i = 0; i < readyVideos.length; i++) {
+      if (state.stopRequested) break;
+      if (state.isPaused) {
+        await waitForResume();
+        if (state.stopRequested) break;
+      }
+
+      const video = readyVideos[i];
+
+      // Re-scan drafts to get fresh DOM element references
+      let drafts = findDraftRows();
+      let draftItem = null;
+
+      if (video.draftId) {
+        draftItem = drafts.find(d => (d.videoId && d.videoId === video.draftId) || d.title === video.draftTitle);
+      }
+      if (!draftItem) {
+        draftItem = drafts.find(d => isTitleMatching(video.name, d.title));
+      }
+      if (!draftItem && drafts.length > 0) {
+        draftItem = drafts[0];
+      }
+
+      if (!draftItem) {
+        // Try scrolling to load drafts from virtualized table
+        window.scrollBy(0, 600);
+        await sleep(1200);
+        drafts = findDraftRows();
+        draftItem = drafts[0] || null;
+      }
+
+      if (!draftItem) {
+        console.warn(`[XMON] Draft row for "${video.name}" not found at publish step.`);
+        video.status = STATUS.FAILED;
+        video.error = 'Draft row not visible during publish step';
+        state.failedCount++;
+        renderUI();
+        continue;
+      }
+
+      try {
+        video.status = STATUS.PUBLISHING;
+        renderUI();
+
+        await publishSingleDraft(draftItem, i + 1, readyVideos.length);
+
+        video.status = STATUS.PUBLISHED;
+        showToast(`Published: ${video.name}`, 'success', 2500);
+        renderUI();
+        saveQueueState();
+      } catch (pubErr) {
+        console.error(`[XMON] Failed to publish draft for "${video.name}":`, pubErr);
+        video.status = STATUS.FAILED;
+        video.error = `Publish error: ${pubErr.message}`;
+        state.failedCount++;
+        renderUI();
+        await closeStuckDialogs(true);
+      }
+
+      await sleep(state.config.delayBetweenVideos);
+    }
+
+    await closeStuckDialogs(true);
   }
 
   // ============================================================
@@ -1075,104 +1442,109 @@
     state.stopRequested = false;
     state.isPaused = false;
     
-    const waitingVideos = state.queue.filter(v => v.status === STATUS.WAITING || v.status === STATUS.FAILED);
-    if (waitingVideos.length === 0) {
+    const initialWaiting = state.queue.filter(v => v.status === STATUS.WAITING || v.status === STATUS.FAILED);
+    if (initialWaiting.length === 0) {
       showToast('No videos to process in queue.', 'warning');
       state.isRunning = false;
       renderUI();
       return;
     }
     
+    // Reset any failed items to waiting if user clicked Start
+    state.queue.forEach(v => {
+      if (v.status === STATUS.FAILED) {
+        v.status = STATUS.WAITING;
+        v.error = null;
+      }
+    });
+
     state.totalCount = state.queue.length;
-    state.totalBatches = Math.ceil(waitingVideos.length / state.batchSize);
+    const activeWaiting = state.queue.filter(v => v.status === STATUS.WAITING);
+    state.totalBatches = Math.ceil(activeWaiting.length / state.batchSize);
     state.currentBatch = 0;
-    state.uploadedCount = 0;
-    state.publishedCount = 0;
+    state.uploadedCount = state.queue.filter(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED).length;
+    state.publishedCount = state.queue.filter(v => v.status === STATUS.PUBLISHED).length;
     state.failedCount = 0;
     
-    showToast(`Starting queue: ${waitingVideos.length} videos in ${state.totalBatches} batches`, 'info');
+    showToast(`Starting queue: ${activeWaiting.length} video(s) in ${state.totalBatches} batch(es)`, 'info');
     renderUI();
     
     try {
-      // Process in batches of 15
-      for (let batchStart = 0; batchStart < waitingVideos.length; batchStart += state.batchSize) {
-        if (state.stopRequested) break;
-        
-        // Pause handling
+      while (!state.stopRequested) {
         if (state.isPaused) {
           updateStatus('Queue paused. Click Resume to continue.', 'paused');
           renderUI();
           await waitForResume();
           if (state.stopRequested) break;
         }
-        
+
+        // Dynamically get the remaining waiting videos
+        const waitingVideos = state.queue.filter(v => v.status === STATUS.WAITING);
+        if (waitingVideos.length === 0) {
+          console.log('[XMON] All waiting videos in queue have been processed!');
+          break;
+        }
+
         state.currentBatch++;
-        const batchEnd = Math.min(batchStart + state.batchSize, waitingVideos.length);
-        const currentBatchVideos = waitingVideos.slice(batchStart, batchEnd);
+        const currentBatchVideos = waitingVideos.slice(0, state.batchSize);
         const batchFiles = currentBatchVideos.filter(v => v.file).map(v => v.file);
-        
-        updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Uploading ${currentBatchVideos.length} videos...`, 'active');
-        renderUI();
-        
-        // Mark batch as uploading
+        const expectedUploadCount = batchFiles.length;
+
+        updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Uploading ${currentBatchVideos.length} video(s)...`, 'active');
         for (const video of currentBatchVideos) {
-          if (state.processedIds.has(video.id)) continue;
           video.status = STATUS.UPLOADING;
         }
         renderUI();
-        
+        saveQueueState();
+
         try {
-          // Upload the batch files
-          if (batchFiles.length > 0) {
-            await uploadBatchToYouTube(batchFiles);
-            
-            // Wait for upload completion — pass currentBatchVideos for real-time status tracking
-            const uploadSuccess = await waitForBatchUploadComplete(batchFiles.length, currentBatchVideos);
-            
-            // Mark any still-uploading videos based on final result
-            for (const video of currentBatchVideos) {
-              if (video.status === STATUS.UPLOADING) {
-                video.status = uploadSuccess ? STATUS.UPLOADED : STATUS.FAILED;
-                if (uploadSuccess) {
-                  state.uploadedCount++;
-                  state.processedIds.add(video.id);
-                } else {
-                  state.failedCount++;
-                  video.error = 'Upload timed out';
-                }
-              }
-            }
-          } else {
-            console.warn('[XMON] Batch has no uploadable files (files may be missing).');
+          if (batchFiles.length === 0) {
+            console.warn('[XMON] Batch has no uploadable files.');
             for (const video of currentBatchVideos) {
               video.status = STATUS.FAILED;
-              video.error = 'File not available for upload (file reference lost)';
+              video.error = 'File reference not available for upload';
               state.failedCount++;
             }
+            renderUI();
+            saveQueueState();
+            continue;
           }
+
+          // Step 1: Pre-batch cleanup — ensure previous dialogs are 100% closed
+          await closeStuckDialogs(true);
+          await closeUploadDialog();
+          await sleep(800);
+
+          // Step 2: Inject and upload the batch files to YouTube Studio
+          await uploadBatchToYouTube(batchFiles);
           
+          // Step 3: Wait for uploads in the dialog & draft save
+          await waitForBatchUploadComplete(expectedUploadCount, currentBatchVideos);
+
+          // Step 4: Close the upload dialog
+          await closeUploadDialog();
+          await sleep(1500);
+          
+          // Step 5: Draft Verification on YouTube Studio Content page
+          const verifiedInBatch = await verifyAndSyncBatchDrafts(currentBatchVideos, 25000);
+          console.log(`[XMON] Batch ${state.currentBatch}: ${verifiedInBatch}/${expectedUploadCount} drafts verified in YouTube Studio.`);
           renderUI();
           saveQueueState();
           
-          // Auto-publish drafts if enabled
+          // Step 6: Publish drafts if enabled
           if (state.config.autoPublishDrafts) {
-            updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Publishing drafts...`, 'active');
-            // Wait for YouTube to register the drafts on the content page
-            await sleep(3000);
-
-            // Navigate to the content/videos page WITHOUT causing a full page reload
-            await navigateToContentSafe();
-
-            // Give the SPA time to render the draft rows
-            await sleep(4000);
-
-            // Publish all currently visible drafts for this batch
-            await publishAllDrafts();
+            await publishBatchDrafts(currentBatchVideos);
           }
+
+          // Step 7: Post-batch cleanup — ensure editor & dialogs are completely closed
+          await closeStuckDialogs(true);
+          await closeUploadDialog();
           
-          // Delay between batches
-          if (batchEnd < waitingVideos.length) {
-            updateStatus(`Batch ${state.currentBatch} complete. Next batch in ${state.config.delayBetweenBatches / 1000}s...`, 'active');
+          // Step 8: Delay before next batch if more waiting videos exist
+          const remainingWaiting = state.queue.filter(v => v.status === STATUS.WAITING).length;
+          if (remainingWaiting > 0 && !state.stopRequested) {
+            updateStatus(`Batch ${state.currentBatch} complete. Next batch starting in ${state.config.delayBetweenBatches / 1000}s...`, 'active');
+            renderUI();
             await sleep(state.config.delayBetweenBatches);
           }
           
@@ -1181,26 +1553,19 @@
           
           console.error('[XMON] Batch error:', batchErr);
           
-          const isDailyLimit = (batchErr.message === 'DAILY_UPLOAD_LIMIT_REACHED' || (state.activeAlert && state.activeAlert.type === 'daily_limit'));
+          const isDailyLimit = batchErr.message === 'DAILY_UPLOAD_LIMIT_REACHED' ||
+                                (state.activeAlert && state.activeAlert.type === 'daily_limit');
           
           if (isDailyLimit) {
             console.warn('[XMON] Daily upload limit reached. Halting queue safely.');
             state.isRunning = false;
             state.isPaused = true;
             
-            // Mark current batch videos as failed with the exact daily limit explanation
             for (const video of currentBatchVideos) {
               if (video.status === STATUS.UPLOADING) {
                 video.status = STATUS.FAILED;
                 video.error = 'Daily upload limit reached. You can upload more videos in 24 hours.';
                 state.failedCount++;
-              }
-            }
-            
-            // Preserve remaining videos in WAITING status for tomorrow
-            for (let i = batchEnd; i < waitingVideos.length; i++) {
-              if (waitingVideos[i].status === STATUS.UPLOADING) {
-                waitingVideos[i].status = STATUS.WAITING;
               }
             }
             
@@ -1220,14 +1585,10 @@
             
             renderUI();
             saveQueueState();
-            await sleep(1500);
-            await closeStuckDialogs();
-            
-            // Stop entire queue immediately - do not attempt subsequent batches
+            await closeStuckDialogs(true);
             break;
           }
           
-          // Mark remaining uploading videos as failed
           for (const video of currentBatchVideos) {
             if (video.status === STATUS.UPLOADING) {
               video.status = STATUS.FAILED;
@@ -1236,12 +1597,8 @@
             }
           }
           
-          showToast(`Batch ${state.currentBatch} had errors: ${batchErr.message}`, 'error');
-          
-          // Try to close any stuck dialogs
-          await closeStuckDialogs();
-          
-          // Continue to next batch
+          showToast(`Batch ${state.currentBatch} error: ${batchErr.message}`, 'error');
+          await closeStuckDialogs(true);
           await sleep(2000);
         }
         
@@ -1263,29 +1620,28 @@
   }
 
   // ============================================================
-  // DRAFT PUBLISHER (standalone mode - preserved from v1)
+  // DRAFT PUBLISHER (Standalone Mode)
   // ============================================================
-  async function publishAllDrafts() {
+  async function publishAllDrafts(maxToPublish = 50) {
     let publishRound = 0;
-    const maxRounds = 50; // Allow up to 50 individual draft publishes per run
     let consecutiveEmpty = 0;
+    const publishedIdsThisRun = new Set();
     
-    while (!state.stopRequested && publishRound < maxRounds) {
+    while (!state.stopRequested && publishRound < maxToPublish) {
       if (state.isPaused) {
         await waitForResume();
         if (state.stopRequested) break;
       }
       
-      const drafts = findDraftRows();
+      const drafts = findDraftRows().filter(d => !publishedIdsThisRun.has(d.videoId || d.title));
       if (drafts.length === 0) {
-        // Auto scroll to find more
         if (state.config.autoScroll) {
           window.scrollBy(0, 800);
           await sleep(2000);
-          const moreDrafts = findDraftRows();
+          const moreDrafts = findDraftRows().filter(d => !publishedIdsThisRun.has(d.videoId || d.title));
           if (moreDrafts.length === 0) {
             consecutiveEmpty++;
-            if (consecutiveEmpty >= 2) break; // No more drafts after 2 scroll attempts
+            if (consecutiveEmpty >= 2) break;
           } else {
             consecutiveEmpty = 0;
           }
@@ -1300,19 +1656,18 @@
       if (!currentDraft) break;
       
       const idx = publishRound + 1;
-      const total = drafts.length + publishRound;
+      const total = Math.min(drafts.length + publishRound, maxToPublish);
       
       try {
-        // publishSingleDraft does NOT increment publishedCount — we do it here only
         await publishSingleDraft(currentDraft, idx, total);
+        publishedIdsThisRun.add(currentDraft.videoId || currentDraft.title);
         updateStatus(`Published (${state.publishedCount}): ${currentDraft.title.substring(0, 30)}`, 'active');
         
-        // Update queue items that match this draft title
         for (const qItem of state.queue) {
           if (qItem.status === STATUS.UPLOADED || qItem.status === STATUS.DRAFT) {
-            const qName = qItem.name.replace(/\.[^/.]+$/, '').substring(0, 20).toLowerCase();
-            const draftTitle = currentDraft.title.toLowerCase();
-            if (draftTitle.includes(qName) || qName.includes(draftTitle.substring(0, 20))) {
+            const qName = normalizeVideoTitle(qItem.name);
+            const draftTitle = normalizeVideoTitle(currentDraft.title);
+            if (draftTitle.includes(qName) || qName.includes(draftTitle)) {
               qItem.status = STATUS.PUBLISHED;
               break;
             }
@@ -1325,14 +1680,14 @@
         currentDraft.row.setAttribute('data-xmon-status', 'failed');
         currentDraft.row.style.outline = '2px solid #e74c3c';
         state.failedCount++;
-        
-        // Close any stuck modals and continue
-        await closeStuckDialogs();
+        await closeStuckDialogs(true);
       }
       
       await sleep(state.config.delayBetweenVideos);
       publishRound++;
     }
+
+    console.log(`[XMON] publishAllDrafts done. Published ${publishRound} draft(s) this run.`);
   }
   
   // Standalone draft publisher (for the "Publish" tab)
@@ -1358,82 +1713,7 @@
     }
   }
 
-  // ============================================================
-  // HELPER: Navigate to content page WITHOUT triggering a full page reload
-  //
-  // CRITICAL: Never assign window.location.href directly. That causes a full
-  // page reload which destroys all JS state (queue, batch loop, etc.).
-  // YouTube Studio is a SPA — use History API or sidebar link clicks only.
-  // ============================================================
-  async function navigateToContentSafe() {
-    const currentUrl = window.location.href;
-
-    // Already on the videos/content page — nothing to do
-    if (currentUrl.includes('/videos') || currentUrl.includes('/content')) {
-      console.log('[XMON] Already on content page, no navigation needed.');
-      return;
-    }
-
-    console.log('[XMON] Navigating to content page via sidebar link click...');
-
-    // Strategy 1: Click the "Content" sidebar link (SPA navigation, state preserved)
-    const sidebarSelectors = [
-      'a[href*="/videos"]',
-      'tp-yt-paper-item[id*="content"]',
-      '[test-id="menu-item-videos"]',
-      '[test-id="menu-item-content"]'
-    ];
-    for (const sel of sidebarSelectors) {
-      const items = deepQueryAll(sel);
-      for (const item of items) {
-        const href = item.getAttribute('href') || '';
-        const text = (item.textContent || '').trim();
-        const isContentLink = /^content$/i.test(text) || href.includes('/videos');
-        if (isContentLink && isElementVisible(item)) {
-          clickElement(item);
-          await sleep(3000);
-          if (window.location.href.includes('/videos') || window.location.href.includes('/content')) {
-            console.log('[XMON] SPA navigation to content page succeeded.');
-            return;
-          }
-        }
-      }
-    }
-
-    // Strategy 2: Use History API pushState to navigate within SPA (no reload)
-    const channelMatch = window.location.href.match(/\/channel\/([^/?#]+)/);
-    const targetPath = channelMatch
-      ? `/channel/${channelMatch[1]}/videos`
-      : null;
-
-    if (targetPath) {
-      try {
-        window.history.pushState({}, '', targetPath);
-        // Dispatch a popstate event so the SPA router picks it up
-        window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-        await sleep(3500);
-        if (window.location.href.includes('/videos') || window.location.href.includes('/content')) {
-          console.log('[XMON] History API navigation to content page succeeded.');
-          return;
-        }
-      } catch (e) {
-        console.warn('[XMON] History API navigation failed:', e);
-      }
-    }
-
-    // Strategy 3: If we are still NOT on the content page and the page content
-    // already shows video rows (YouTube loaded them while upload dialog was open),
-    // just proceed — drafts should be visible.
-    const draftRows = document.querySelectorAll('ytcp-video-row');
-    if (draftRows.length > 0) {
-      console.log('[XMON] Video rows already present on page — proceeding without navigation.');
-      return;
-    }
-
-    console.warn('[XMON] Could not navigate to content page. Draft publishing may be limited to currently visible rows.');
-  }
-
-  // Legacy alias kept for any future internal use — routes to the safe version
+  // Legacy alias kept for backward compatibility
   async function navigateToContent() {
     return navigateToContentSafe();
   }
@@ -1441,16 +1721,13 @@
   // ============================================================
   // HELPER: Close stuck dialogs
   // ============================================================
-  async function closeStuckDialogs() {
-    // Only close dialogs that are clearly stuck (not the active upload dialog during upload)
-    if (state.isRunning) {
-      // During upload: only close share/video-share dialogs, NOT the main upload dialog
+  async function closeStuckDialogs(forceAll = false) {
+    if (state.isRunning && !forceAll) {
       const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
       if (shareClose && isElementVisible(shareClose)) {
         clickElement(shareClose);
         await sleep(400);
       }
-      // Close error dialogs
       const errorClose = deepQuery('ytcp-alert-dialog #cancel-button, ytcp-alert-dialog [aria-label="Cancel"]');
       if (errorClose && isElementVisible(errorClose)) {
         clickElement(errorClose);
@@ -1459,10 +1736,15 @@
       return;
     }
 
-    // When not running: close any lingering dialogs
     const closeSelectors = [
       'ytcp-video-share-dialog #close-button',
+      'ytcp-video-share-dialog [aria-label="Close"]',
+      'ytcp-video-metadata-editor #close-button',
+      'ytcp-video-metadata-editor [aria-label="Close"]',
+      'ytcp-alert-dialog #cancel-button',
+      'ytcp-alert-dialog [aria-label="Cancel"]',
       'ytcp-uploads-dialog #close-button',
+      'ytcp-multi-file-upload-dialog #close-button',
       '[aria-label="Close"]',
       'ytcp-button#close-button'
     ];
@@ -1471,7 +1753,7 @@
       const btn = deepQuery(sel);
       if (btn && isElementVisible(btn)) {
         clickElement(btn);
-        await sleep(500);
+        await sleep(400);
       }
     }
   }
@@ -1829,7 +2111,7 @@
       <!-- Footer -->
       <div class="xmon-footer">
         <span class="xmon-footer-text">XMON Systems</span>
-        <span class="xmon-footer-version">v2.2.0</span>
+        <span class="xmon-footer-version">v2.3.0</span>
       </div>
     `;
   }

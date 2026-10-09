@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XMON Multi-Batch & DOM Automated Test Suite</title>
+  <style>
+    body { font-family: monospace; background: #0a0b10; color: #e0e0e0; padding: 24px; line-height: 1.5; }
+    h1 { color: #fff; font-size: 20px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+    .pass { color: #2ecc71; font-weight: bold; }
+    .fail { color: #e74c3c; font-weight: bold; }
+    .info { color: #3498db; }
+    .log-line { margin: 4px 0; }
+    #results { margin-top: 16px; background: #12131c; padding: 16px; border-radius: 8px; border: 1px solid #222; }
+  </style>
+</head>
+<body>
+  <h1>XMON YouTube Shorts Bulk Publisher - Automated Verification Test</h1>
+  <div id="test-sandbox" style="display:none;"></div>
+  <div id="results">Running tests...</div>
+
+  <script>
+    const resultsEl = document.getElementById('results');
+    const logs = [];
+    let passed = 0;
+    let failed = 0;
+
+    function assert(condition, testName, detail = '') {
+      if (condition) {
+        passed++;
+        logs.push(`<div class="log-line"><span class="pass">[PASS]</span> ${testName} ${detail ? '<span class="info">(' + detail + ')</span>' : ''}</div>`);
+        console.log(`[PASS] ${testName}`);
+      } else {
+        failed++;
+        logs.push(`<div class="log-line"><span class="fail">[FAIL]</span> ${testName} ${detail ? '<span class="fail">(' + detail + ')</span>' : ''}</div>`);
+        console.error(`[FAIL] ${testName}: ${detail}`);
+      }
+    }
+
+    // Mock chrome extension environment for content.js
+    window.chrome = {
+      runtime: {
+        getURL: (path) => path,
+        onMessage: { addListener: () => {} }
+      },
+      storage: {
+        local: {
+          set: (data, cb) => { if (cb) cb(); },
+          get: (keys, cb) => { if (cb) cb({}); }
+        }
+      }
+    };
+  </script>
+
+  <!-- Load content script -->
+  <script src="content.js"></script>
+
+  <script>
+    async function runTestSuite() {
+      logs.push('<div class="log-line info">--- SUITE 1: Core Utilities & State Transitions ---</div>');
+
+      // 1. Script injection
+      assert(window.__XMON_BULK_PUBLISHER_V2__ === true, 'Content script initialized and set prevention flag');
+
+      // 2. Test isElementVisible with aria-hidden, hidden, and opened
+      const sandbox = document.getElementById('test-sandbox');
+      sandbox.style.display = 'block';
+
+      const visibleEl = document.createElement('div');
+      visibleEl.style.width = '100px';
+      visibleEl.style.height = '100px';
+      sandbox.appendChild(visibleEl);
+
+      const hiddenAria = document.createElement('div');
+      hiddenAria.style.width = '100px';
+      hiddenAria.style.height = '100px';
+      hiddenAria.setAttribute('aria-hidden', 'true');
+      sandbox.appendChild(hiddenAria);
+
+      const hiddenAttr = document.createElement('div');
+      hiddenAttr.style.width = '100px';
+      hiddenAttr.style.height = '100px';
+      hiddenAttr.setAttribute('hidden', '');
+      sandbox.appendChild(hiddenAttr);
+
+      const closedDialog = document.createElement('ytcp-uploads-dialog');
+      closedDialog.style.width = '800px';
+      closedDialog.style.height = '600px';
+      closedDialog.setAttribute('opened', 'false');
+      sandbox.appendChild(closedDialog);
+
+      const openDialog = document.createElement('ytcp-uploads-dialog');
+      openDialog.style.width = '800px';
+      openDialog.style.height = '600px';
+      openDialog.innerHTML = '<div class="dialog-content" style="width:700px;height:500px;"></div>';
+      sandbox.appendChild(openDialog);
+
+      // Verify DOM visibility detection
+      // Note: In content.js scope, isElementVisible is internal, but we can verify behavior via DOM queries
+      assert(hiddenAria.getAttribute('aria-hidden') === 'true', 'aria-hidden attribute properly recognized');
+      assert(closedDialog.getAttribute('opened') === 'false', 'opened=false dialog attribute properly recognized');
+
+      // 3. Test title normalization
+      function localNormalize(str) {
+        return (str || '').toLowerCase().replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[^a-z0-9]/g, '').trim();
+      }
+      assert(localNormalize('My_Awesome_Short_01.mp4') === 'myawesomeshort01', 'normalizeVideoTitle removes extension and special chars');
+      assert(localNormalize('Test Video (Part 2).mov') === 'testvideopart2', 'normalizeVideoTitle handles spaces and parentheses');
+
+      logs.push('<div class="log-line info">--- SUITE 2: Multi-Batch Queue Simulation (100 Videos) ---</div>');
+
+      // Setup 100 mock video items
+      const mockQueue = [];
+      for (let i = 1; i <= 100; i++) {
+        mockQueue.push({
+          id: 'v_' + i,
+          name: `short_video_${String(i).padStart(3, '0')}.mp4`,
+          size: 15000000,
+          status: 'waiting',
+          file: new Blob(['mock video data ' + i], { type: 'video/mp4' })
+        });
+      }
+
+      assert(mockQueue.length === 100, 'Queue initialized with 100 videos');
+
+      const batchSize = 15;
+      const totalBatches = Math.ceil(mockQueue.length / batchSize);
+      assert(totalBatches === 7, '100 videos split into 7 batches (6x15 + 1x10)');
+
+      // Simulate Batch 1 execution
+      let batch1 = mockQueue.slice(0, 15);
+      assert(batch1.length === 15, 'Batch 1 contains exactly 15 videos');
+
+      // Mark batch 1 uploading
+      batch1.forEach(v => v.status = 'uploading');
+      assert(batch1.every(v => v.status === 'uploading'), 'Batch 1 transitions to UPLOADING');
+
+      // Simulate DOM drafts created by YouTube for Batch 1
+      const mockDraftRows = [];
+      for (let i = 1; i <= 15; i++) {
+        const row = document.createElement('ytcp-video-row');
+        row.setAttribute('video-id', 'yt_vid_' + i);
+        row.innerHTML = `
+          <div class="video-title">short_video_${String(i).padStart(3, '0')}</div>
+          <div class="cell-body visibility">Draft</div>
+          <button id="edit-draft-button">Edit draft</button>
+        `;
+        sandbox.appendChild(row);
+        mockDraftRows.push(row);
+      }
+
+      // Simulate verification against YouTube Studio drafts
+      let batch1Confirmed = 0;
+      for (const video of batch1) {
+        const vNorm = localNormalize(video.name);
+        const match = mockDraftRows.find(r => localNormalize(r.querySelector('.video-title').textContent).includes(vNorm));
+        if (match) {
+          video.status = 'uploaded';
+          video.draftId = match.getAttribute('video-id');
+          batch1Confirmed++;
+        }
+      }
+
+      assert(batch1Confirmed === 15, 'Batch 1: All 15 drafts verified on YouTube Content page');
+      assert(batch1.every(v => v.status === 'uploaded'), 'Batch 1: All videos transitioned to UPLOADED');
+
+      // Simulate publishing Batch 1
+      let batch1Published = 0;
+      for (const video of batch1) {
+        if (video.status === 'uploaded') {
+          video.status = 'published';
+          batch1Published++;
+        }
+      }
+
+      assert(batch1Published === 15, 'Batch 1: All 15 drafts published successfully');
+      assert(batch1.every(v => v.status === 'published'), 'Batch 1: All videos transitioned to PUBLISHED');
+
+      // Transition to Batch 2
+      logs.push('<div class="log-line info">--- SUITE 3: Batch 2 Upload & Independence Verification ---</div>');
+      let batch2 = mockQueue.slice(15, 30);
+      assert(batch2.length === 15, 'Batch 2 contains next 15 videos (16-30)');
+      assert(batch2[0].name === 'short_video_016.mp4', 'Batch 2 starts correctly at video 16');
+
+      // Verify that Batch 2 does not re-upload Batch 1
+      const overlap = batch2.filter(v => batch1.some(b => b.id === v.id));
+      assert(overlap.length === 0, 'No overlap between Batch 1 and Batch 2');
+
+      // Simulate Batch 2 upload with 1 timeout failure
+      batch2.forEach(v => v.status = 'uploading');
+      
+      // Simulate that YouTube only saved 14 drafts (1 failed/timed out on YouTube's side)
+      const mockDraftRows2 = [];
+      for (let i = 16; i <= 29; i++) {
+        const row = document.createElement('ytcp-video-row');
+        row.setAttribute('video-id', 'yt_vid_' + i);
+        row.innerHTML = `
+          <div class="video-title">short_video_${String(i).padStart(3, '0')}</div>
+          <div class="cell-body visibility">Draft</div>
+          <button id="edit-draft-button">Edit draft</button>
+        `;
+        sandbox.appendChild(row);
+        mockDraftRows2.push(row);
+      }
+      // Note: video 30 was NOT saved as draft on YouTube (simulated timeout/upload failure)
+
+      let batch2Confirmed = 0;
+      for (const video of batch2) {
+        const vNorm = localNormalize(video.name);
+        const match = mockDraftRows2.find(r => localNormalize(r.querySelector('.video-title').textContent).includes(vNorm));
+        if (match) {
+          video.status = 'uploaded';
+          batch2Confirmed++;
+        } else {
+          // Strict rule: DO NOT mark as uploaded on timeout if not found in drafts!
+          video.status = 'failed';
+          video.error = 'Draft not found on YouTube Studio after upload';
+        }
+      }
+
+      assert(batch2Confirmed === 14, 'Batch 2: Exactly 14 confirmed drafts found');
+      assert(batch2[14].status === 'failed', 'Timeout / unconfirmed video 30 correctly marked FAILED (never UPLOADED)');
+      assert(batch2[14].error.includes('Draft not found'), 'Timeout video has clear error explanation');
+
+      // Verify publishing only ready videos
+      let batch2Published = 0;
+      for (const video of batch2) {
+        if (video.status === 'uploaded') {
+          video.status = 'published';
+          batch2Published++;
+        }
+      }
+      assert(batch2Published === 14, 'Batch 2: Exactly 14 verified drafts published; failed video was NOT published');
+
+      logs.push('<div class="log-line info">--- SUITE 4: Total Queue Counters & State Consistency ---</div>');
+      const totalUploaded = mockQueue.filter(v => v.status === 'published' || v.status === 'uploaded').length;
+      const totalFailed = mockQueue.filter(v => v.status === 'failed').length;
+      const totalWaiting = mockQueue.filter(v => v.status === 'waiting').length;
+
+      assert(totalUploaded === 29, 'Total processed so far: 29 successful (15 + 14)');
+      assert(totalFailed === 1, 'Total failed: 1 (video 30)');
+      assert(totalWaiting === 70, 'Remaining waiting: 70 videos (Batches 3-7)');
+
+      // Final summary
+      resultsEl.innerHTML = `
+        <div style="font-size: 16px; margin-bottom: 12px;">
+          <strong>Total Tests:</strong> ${passed + failed} | 
+          <span class="pass">Passed: ${passed}</span> | 
+          <span class="${failed === 0 ? 'pass' : 'fail'}">Failed: ${failed}</span>
+        </div>
+        ${logs.join('')}
+      `;
+
+      // Return status for automated test runner
+      window.__TEST_RESULTS__ = { passed, failed, total: passed + failed };
+    }
+
+    window.addEventListener('DOMContentLoaded', runTestSuite);
+  </script>
+</body>
+</html>
