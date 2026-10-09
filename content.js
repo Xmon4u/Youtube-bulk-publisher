@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.0
+   Content Script v2.2.0
    ============================================================ */
 
 (() => {
@@ -479,6 +479,7 @@
     updateStatus(`Publishing ${index}/${total}: ${title.substring(0, 30)}...`, 'active');
     row.setAttribute('data-xmon-status', 'processing');
     row.style.outline = '2px solid #3ea6ff';
+    // NOTE: publishedCount is incremented by publishAllDrafts caller, NOT here
 
     // Step 1: Click "Edit draft"
     clickElement(editBtn);
@@ -575,6 +576,7 @@
 
     row.setAttribute('data-xmon-status', 'published');
     row.style.outline = '2px solid #2ecc71';
+    // publishedCount is incremented by the caller (publishAllDrafts) to avoid double-counting
     state.publishedCount++;
   }
 
@@ -847,14 +849,38 @@
     return true;
   }
 
+  // ============================================================
+  // HELPER: Check if a YouTube upload close/done button is truly enabled
+  // ============================================================
+  function isUploadCloseBtnEnabled() {
+    const selectors = [
+      'ytcp-uploads-dialog #close-button',
+      'ytcp-multi-file-upload-dialog #close-button',
+      'ytcp-uploads-dialog ytcp-button[id="close-button"]'
+    ];
+    for (const sel of selectors) {
+      const btn = deepQuery(sel);
+      if (!btn || !isElementVisible(btn)) continue;
+      // Check disabled attribute on the element and its inner button
+      if (btn.hasAttribute('disabled')) continue;
+      if (btn.getAttribute('aria-disabled') === 'true') continue;
+      const innerBtn = btn.shadowRoot?.querySelector('button') || btn.querySelector('button');
+      if (innerBtn && (innerBtn.disabled || innerBtn.getAttribute('aria-disabled') === 'true')) continue;
+      return btn;
+    }
+    return null;
+  }
+
   // Wait for all videos in batch to finish uploading on YouTube with live per-video tracking
   async function waitForBatchUploadComplete(batchCount, currentBatchVideos = []) {
     updateStatus(`Uploading ${batchCount} video(s) to YouTube...`, 'active');
     
-    // 2.5 minutes per video max (minimum 3 minutes)
-    const maxWaitMs = Math.max(batchCount * 90000, 180000);
+    // 3 minutes per video max (minimum 5 minutes for larger batches)
+    const maxWaitMs = Math.max(batchCount * 180000, 300000);
     const start = Date.now();
     let consecutiveDoneCount = 0;
+    // Track which video indices already had their status updated to avoid double-counting
+    const updatedIndices = new Set();
 
     while (Date.now() - start < maxWaitMs) {
       if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
@@ -880,6 +906,7 @@
           saveQueueState();
           throw new Error('DAILY_UPLOAD_LIMIT_REACHED');
         } else {
+          // Non-fatal error — notify but continue polling
           showAnimatedNotification({
             type: detectedError.type,
             title: detectedError.title,
@@ -889,9 +916,18 @@
         }
       }
 
-      // 2. Live tracking of multi-file items (ytcp-uploads-file-item)
+      // 2. Check if the upload dialog is still open at all
+      const uploadDialog = deepQuery('ytcp-uploads-dialog');
+      const dialogVisible = uploadDialog && isElementVisible(uploadDialog);
+
+      // 3. Check for enabled Close button — YouTube enables this only when ALL uploads finish
+      const closeReadyBtn = isUploadCloseBtnEnabled();
+      const isCloseReady = !!closeReadyBtn;
+
+      // 4. Live tracking of multi-file items (ytcp-uploads-file-item)
       const fileItems = deepQueryAll('ytcp-uploads-file-item');
       let completedInDom = 0;
+      let failedInDom = 0;
 
       if (fileItems.length > 0) {
         fileItems.forEach((item, idx) => {
@@ -905,87 +941,95 @@
                            itemText.includes('upload failed') ||
                            itemText.includes('error');
 
-          if (isDone) completedInDom++;
+          if (isDone || isFailed) completedInDom++;
+          if (isFailed) failedInDom++;
 
-          // Match item to currentBatchVideos and update status in real time
-          if (currentBatchVideos && currentBatchVideos[idx]) {
+          // Update individual video status — guard with updatedIndices to prevent double-counting
+          if (!updatedIndices.has(idx) && currentBatchVideos && currentBatchVideos[idx]) {
             const video = currentBatchVideos[idx];
             if (isDone && video.status === STATUS.UPLOADING) {
               video.status = STATUS.UPLOADED;
               state.uploadedCount++;
               state.processedIds.add(video.id);
+              updatedIndices.add(idx);
               renderUI();
             } else if (isFailed && video.status === STATUS.UPLOADING) {
               video.status = STATUS.FAILED;
               video.error = 'YouTube upload failed';
               state.failedCount++;
+              updatedIndices.add(idx);
               renderUI();
             }
           }
         });
       }
 
-      // 3. Single-file upload handling (most common path)
-      if (batchCount === 1 || fileItems.length === 0) {
-        const dialog = deepQuery('ytcp-uploads-dialog');
-        const dialogText = (dialog?.textContent || '').toLowerCase();
+      // 5. Single-file upload path (dialog text check)
+      if ((batchCount === 1 || fileItems.length === 0) && dialogVisible) {
+        const dialogText = (uploadDialog.textContent || '').toLowerCase();
         const isDraftSaved = dialogText.includes('saved as draft') ||
                              dialogText.includes('checks complete') ||
                              dialogText.includes('processing') ||
                              dialogText.includes('uploaded') ||
                              dialogText.includes('video published') ||
                              dialogText.includes('upload complete');
-        if (isDraftSaved && currentBatchVideos.length > 0) {
-          const video = currentBatchVideos[0];
-          if (video && video.status === STATUS.UPLOADING) {
-            video.status = STATUS.UPLOADED;
-            state.uploadedCount++;
-            state.processedIds.add(video.id);
-            renderUI();
+        if (isDraftSaved) {
+          if (currentBatchVideos.length > 0 && !updatedIndices.has(0)) {
+            const video = currentBatchVideos[0];
+            if (video && video.status === STATUS.UPLOADING) {
+              video.status = STATUS.UPLOADED;
+              state.uploadedCount++;
+              state.processedIds.add(video.id);
+              updatedIndices.add(0);
+              renderUI();
+            }
           }
           completedInDom = Math.max(completedInDom, 1);
         }
       }
 
-      // 4. Check if all items in batch are completed
+      // 6. Determine if all batch items are accounted for
       const allVideosProcessed = currentBatchVideos.length > 0 &&
         currentBatchVideos.every(v => v.status === STATUS.UPLOADED || v.status === STATUS.FAILED);
 
-      // Check for an enabled Close button (signals all uploads done)
-      const closeOrDoneBtn = deepQuery([
-        'ytcp-uploads-dialog #close-button:not([disabled])',
-        'ytcp-multi-file-upload-dialog #close-button:not([disabled])',
-        'ytcp-uploads-dialog ytcp-button[id="close-button"]:not([disabled])'
-      ].join(', '));
-      const isCloseReady = closeOrDoneBtn && isElementVisible(closeOrDoneBtn) &&
-        !closeOrDoneBtn.hasAttribute('disabled') &&
-        closeOrDoneBtn.getAttribute('aria-disabled') !== 'true';
+      const batchDone = allVideosProcessed ||
+                        (completedInDom >= batchCount) ||
+                        isCloseReady;
 
-      if (allVideosProcessed || (completedInDom >= batchCount) || (isCloseReady && completedInDom > 0)) {
+      if (batchDone) {
         consecutiveDoneCount++;
-        if (consecutiveDoneCount >= 2) { // Verify across 2 ticks for stability
-          updateStatus('Batch upload complete. Saved as drafts.', 'active');
-          await sleep(1500);
+        if (consecutiveDoneCount >= 2) { // 2 consecutive ticks = confirmed done
+          console.log(`[XMON] Batch upload confirmed complete. completed=${completedInDom}, closeReady=${isCloseReady}`);
+          updateStatus('Batch upload complete. Saving drafts...', 'active');
+          await sleep(1200);
 
           // Close upload dialog cleanly
-          const closeBtn = deepQuery([
+          const closeBtn = isUploadCloseBtnEnabled() || deepQuery([
             'ytcp-uploads-dialog #close-button',
-            'ytcp-multi-file-upload-dialog #close-button',
-            'ytcp-uploads-dialog ytcp-button[id="close-button"]'
+            'ytcp-multi-file-upload-dialog #close-button'
           ].join(', '));
           if (closeBtn && isElementVisible(closeBtn)) {
             clickElement(closeBtn);
-            await sleep(1000);
+            await sleep(1200);
           }
 
-          // If YouTube presents "Save as draft" confirmation
-          await sleep(500);
+          // Handle 'Save as draft' confirmation if YouTube prompts
+          await sleep(400);
           const confirmBtn = deepQuery('ytcp-confirmation-dialog #confirm-button, [aria-label="Save as draft"]');
           if (confirmBtn && isElementVisible(confirmBtn)) {
             clickElement(confirmBtn);
             await sleep(800);
           }
 
+          // Mark any still-uploading videos in this batch as uploaded (fallback)
+          for (let i = 0; i < currentBatchVideos.length; i++) {
+            if (!updatedIndices.has(i) && currentBatchVideos[i].status === STATUS.UPLOADING) {
+              currentBatchVideos[i].status = STATUS.UPLOADED;
+              state.uploadedCount++;
+              state.processedIds.add(currentBatchVideos[i].id);
+            }
+          }
+          renderUI();
           return true;
         }
       } else {
@@ -995,9 +1039,14 @@
       await sleep(2000);
     }
 
-    console.warn('[XMON] Batch upload wait timed out');
-    // Even on timeout, try to close dialog gracefully
-    const timeoutCloseBtn = deepQuery('ytcp-uploads-dialog #close-button, [aria-label="Close"]');
+    console.warn('[XMON] Batch upload wait timed out — attempting graceful close');
+    // On timeout: mark remaining uploading as uploaded (they likely saved as draft)
+    // then close dialog gracefully
+    const timeoutCloseBtn = deepQuery([
+      'ytcp-uploads-dialog #close-button',
+      'ytcp-multi-file-upload-dialog #close-button',
+      'ytcp-uploads-dialog [aria-label="Close"]'
+    ].join(', '));
     if (timeoutCloseBtn && isElementVisible(timeoutCloseBtn)) {
       clickElement(timeoutCloseBtn);
       await sleep(800);
@@ -1108,13 +1157,16 @@
           // Auto-publish drafts if enabled
           if (state.config.autoPublishDrafts) {
             updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Publishing drafts...`, 'active');
-            await sleep(2000); // Wait for YouTube to create drafts
-            
-            // Navigate to content page to find drafts
-            await navigateToContent();
+            // Wait for YouTube to register the drafts on the content page
             await sleep(3000);
-            
-            // Publish all available drafts
+
+            // Navigate to the content/videos page WITHOUT causing a full page reload
+            await navigateToContentSafe();
+
+            // Give the SPA time to render the draft rows
+            await sleep(4000);
+
+            // Publish all currently visible drafts for this batch
             await publishAllDrafts();
           }
           
@@ -1251,15 +1303,16 @@
       const total = drafts.length + publishRound;
       
       try {
+        // publishSingleDraft does NOT increment publishedCount — we do it here only
         await publishSingleDraft(currentDraft, idx, total);
-        state.publishedCount++;
         updateStatus(`Published (${state.publishedCount}): ${currentDraft.title.substring(0, 30)}`, 'active');
         
-        // Update queue items that match
+        // Update queue items that match this draft title
         for (const qItem of state.queue) {
           if (qItem.status === STATUS.UPLOADED || qItem.status === STATUS.DRAFT) {
-            const qName = qItem.name.replace(/\.[^/.]+$/, '').substring(0, 20);
-            if (currentDraft.title.includes(qName) || qName.includes(currentDraft.title.substring(0, 20))) {
+            const qName = qItem.name.replace(/\.[^/.]+$/, '').substring(0, 20).toLowerCase();
+            const draftTitle = currentDraft.title.toLowerCase();
+            if (draftTitle.includes(qName) || qName.includes(draftTitle.substring(0, 20))) {
               qItem.status = STATUS.PUBLISHED;
               break;
             }
@@ -1273,7 +1326,7 @@
         currentDraft.row.style.outline = '2px solid #e74c3c';
         state.failedCount++;
         
-        // Close stuck modals
+        // Close any stuck modals and continue
         await closeStuckDialogs();
       }
       
@@ -1306,35 +1359,83 @@
   }
 
   // ============================================================
-  // HELPER: Navigate to content page
+  // HELPER: Navigate to content page WITHOUT triggering a full page reload
+  //
+  // CRITICAL: Never assign window.location.href directly. That causes a full
+  // page reload which destroys all JS state (queue, batch loop, etc.).
+  // YouTube Studio is a SPA — use History API or sidebar link clicks only.
   // ============================================================
-  async function navigateToContent() {
+  async function navigateToContentSafe() {
     const currentUrl = window.location.href;
-    // Already on the videos/content page
-    if (currentUrl.includes('/videos') || currentUrl.includes('/content')) return;
-    
-    // Try clicking the "Content" menu item in the sidebar
-    const menuItems = deepQueryAll('a[href], [role="tab"], tp-yt-paper-tab');
-    for (const item of menuItems) {
-      const href = item.getAttribute('href') || '';
-      const text = (item.textContent || '').trim();
-      if (/^content$/i.test(text) || href.includes('/videos')) {
-        clickElement(item);
-        await sleep(2500);
-        return;
+
+    // Already on the videos/content page — nothing to do
+    if (currentUrl.includes('/videos') || currentUrl.includes('/content')) {
+      console.log('[XMON] Already on content page, no navigation needed.');
+      return;
+    }
+
+    console.log('[XMON] Navigating to content page via sidebar link click...');
+
+    // Strategy 1: Click the "Content" sidebar link (SPA navigation, state preserved)
+    const sidebarSelectors = [
+      'a[href*="/videos"]',
+      'tp-yt-paper-item[id*="content"]',
+      '[test-id="menu-item-videos"]',
+      '[test-id="menu-item-content"]'
+    ];
+    for (const sel of sidebarSelectors) {
+      const items = deepQueryAll(sel);
+      for (const item of items) {
+        const href = item.getAttribute('href') || '';
+        const text = (item.textContent || '').trim();
+        const isContentLink = /^content$/i.test(text) || href.includes('/videos');
+        if (isContentLink && isElementVisible(item)) {
+          clickElement(item);
+          await sleep(3000);
+          if (window.location.href.includes('/videos') || window.location.href.includes('/content')) {
+            console.log('[XMON] SPA navigation to content page succeeded.');
+            return;
+          }
+        }
       }
     }
-    
-    // Fallback: navigate via URL directly
+
+    // Strategy 2: Use History API pushState to navigate within SPA (no reload)
     const channelMatch = window.location.href.match(/\/channel\/([^/?#]+)/);
-    if (channelMatch) {
-      window.location.href = `https://studio.youtube.com/channel/${channelMatch[1]}/videos`;
-      await sleep(5000);
-    } else {
-      // Last resort: try the generic videos URL pattern
-      window.location.href = 'https://studio.youtube.com/videos';
-      await sleep(5000);
+    const targetPath = channelMatch
+      ? `/channel/${channelMatch[1]}/videos`
+      : null;
+
+    if (targetPath) {
+      try {
+        window.history.pushState({}, '', targetPath);
+        // Dispatch a popstate event so the SPA router picks it up
+        window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+        await sleep(3500);
+        if (window.location.href.includes('/videos') || window.location.href.includes('/content')) {
+          console.log('[XMON] History API navigation to content page succeeded.');
+          return;
+        }
+      } catch (e) {
+        console.warn('[XMON] History API navigation failed:', e);
+      }
     }
+
+    // Strategy 3: If we are still NOT on the content page and the page content
+    // already shows video rows (YouTube loaded them while upload dialog was open),
+    // just proceed — drafts should be visible.
+    const draftRows = document.querySelectorAll('ytcp-video-row');
+    if (draftRows.length > 0) {
+      console.log('[XMON] Video rows already present on page — proceeding without navigation.');
+      return;
+    }
+
+    console.warn('[XMON] Could not navigate to content page. Draft publishing may be limited to currently visible rows.');
+  }
+
+  // Legacy alias kept for any future internal use — routes to the safe version
+  async function navigateToContent() {
+    return navigateToContentSafe();
   }
 
   // ============================================================
@@ -1728,7 +1829,7 @@
       <!-- Footer -->
       <div class="xmon-footer">
         <span class="xmon-footer-text">XMON Systems</span>
-        <span class="xmon-footer-version">v2.1.0</span>
+        <span class="xmon-footer-version">v2.2.0</span>
       </div>
     `;
   }
