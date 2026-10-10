@@ -90,6 +90,18 @@ Youtube-bulk-publisher/
 
 ## Changelog
 
+### v2.9.0 (2026-10-10)
+
+Critical bug-fix release fixing draft publishing failures ("Edit draft button not found" and "Editor dialog did not open"):
+
+- **Edit Draft Button Retry Loop**: `publishSingleDraft()` now retries up to 3 times with increasing hover delays (500ms → 800ms → 1200ms) and dispatches both `mouseenter` and `mouseover` events before searching for the button. This fixes the most common error where YouTube Studio's virtualized row didn't render action buttons fast enough.
+- **Extended Edit Button Selectors**: Added `[aria-label*="Edit" i]`, `ytcp-icon-button`, `[role="button"]`, three-dot menu icon selectors, and `a[href*="/video/"]` title link fallback. Covers YouTube Studio UI changes where the direct "Edit draft" button was replaced or restructured.
+- **Scroll-Into-View Before Hover**: Each retry attempt now scrolls the draft row into the viewport center before hovering, ensuring off-screen rows receive the hover event correctly.
+- **Extended Editor Dialog Selectors**: `waitFor()` dialog detection now checks `ytcp-video-metadata-editor-advanced`, `ytcp-video-editor`, and `ytcp-dialog[id*="dialog"]` in addition to the existing selectors. Also increased wait timeout from 12s to 15s.
+- **`isDialogOpen()` Attribute Fix**: Previously only checked if `opened === 'false'`, but an empty `opened=""` attribute or missing `opened` was ambiguous. Now correctly treats `opened=""` and `opened` (no value) as open, and only `opened="false"` as closed. Also added `getComputedStyle` CSS visibility check.
+- **Visibility Radio Button Fallbacks**: Added `[name="..."]` generic selector, `[role="radio"]`, and `ytcp-ve-visibility-radio-button` to handle YouTube Studio's evolving radio button components. Increased visibility step wait from 6s to 8s.
+- **Share Dialog Close Improvements**: Added `[aria-label="Close" i]` case-insensitive selector and Escape key dispatch to both `document` and `window`. Extended dialog close wait from 10s to 12s.
+
 ### v2.8.0 (2026-10-10)
 
 Bug-fix release addressing 6 logic errors found during full code audit:

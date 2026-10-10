@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.8.0
+   Content Script v2.9.0
    ============================================================ */
 
 (() => {
@@ -186,8 +186,20 @@
 
   function isDialogOpen(dialog) {
     if (!dialog) return false;
-    if (dialog.hasAttribute('opened') && dialog.getAttribute('opened') === 'false') return false;
+    // Only treat as closed if opened is explicitly set to 'false'
+    // opened="" (empty) or opened (no value) means the dialog IS open in HTML
+    if (dialog.hasAttribute('opened')) {
+      const openedVal = dialog.getAttribute('opened');
+      if (openedVal === 'false') return false;
+      // opened="" or opened="true" or opened (no value) — all mean open
+    }
     if (dialog.hasAttribute('hidden')) return false;
+
+    // Check computed visibility — dialog may exist in DOM but be hidden via CSS
+    try {
+      const style = window.getComputedStyle(dialog);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    } catch (e) {}
 
     // Check inner dialog content in shadowRoot or light DOM
     const content = dialog.shadowRoot?.querySelector('#dialog, .dialog-content, tp-yt-paper-dialog, ytcp-dialog')
@@ -615,19 +627,36 @@
     for (const row of rows) {
       if (row.getAttribute('data-xmon-status') === 'published') continue;
 
+      // Trigger hover to reveal action buttons (YouTube virtualizes these)
       try {
         row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       } catch (e) {}
 
+      // Extended edit-draft button selectors for YouTube Studio UI updates
       let editBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
-        || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"], [aria-label*="draft" i], [title*="draft" i]', row);
+        || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"], [aria-label*="draft" i], [title*="draft" i], [aria-label*="Edit" i]', row);
 
       if (!editBtn) {
-        const buttons = deepQueryAll('ytcp-button, button, a', row);
+        // Search for any clickable element that looks like an edit button
+        const buttons = deepQueryAll('ytcp-button, ytcp-icon-button, button, a, [role="button"]', row);
         editBtn = buttons.find(b => {
-          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || '').toLowerCase();
-          return text.includes('draft') || text.includes('edit draft') || text.includes('খসড়া');
+          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
+          return text.includes('draft') || text.includes('edit draft') || text.includes('edit video') || text.includes('খসড়া');
         });
+      }
+
+      // Fallback: look for three-dot/kebab menu or any icon button in the row's action area
+      if (!editBtn) {
+        const actionArea = row.querySelector('.action-buttons, .actions, [class*="action"]') || row;
+        const iconBtns = deepQueryAll('ytcp-icon-button, [icon="icons:more-vert"], [icon="icons:create"]', actionArea);
+        if (iconBtns.length > 0) {
+          // Prefer an edit-like icon button, or fallback to the first action button
+          editBtn = iconBtns.find(b => {
+            const label = (b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
+            return label.includes('edit') || label.includes('draft');
+          }) || iconBtns[0];
+        }
       }
 
       const visCell = row.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
@@ -637,8 +666,8 @@
       const isDraftText = visText.includes('draft') || visText.includes('খসড়া') || (editBtn !== null);
 
       if (editBtn || isDraftText) {
-        const titleEl = row.querySelector('#video-title, .video-title, #title-link')
-          || deepQuery('#video-title, .video-title, #title-link', row);
+        const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
+          || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
         const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
         const videoId = row.getAttribute('video-id') ||
           row.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
@@ -661,36 +690,98 @@
     row.setAttribute('data-xmon-status', 'processing');
     row.style.outline = '2px solid #3ea6ff';
 
-    // Step 1: Click "Edit draft"
+    // Step 1: Click "Edit draft" — with retry/re-hover loop
     let buttonToClick = editBtn;
-    if (!buttonToClick) {
+    let editBtnFound = !!buttonToClick;
+
+    // Retry up to 3 times with increasing hover delay to find the edit button
+    for (let hoverAttempt = 0; !editBtnFound && hoverAttempt < 3; hoverAttempt++) {
       try {
+        // Scroll the row into view first
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        await sleep(200);
+
+        // Dispatch both mouseenter and mouseover for compatibility
         row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        // Also try focusing the row
+        try { row.focus(); } catch(e) {}
       } catch (e) {}
-      await sleep(200);
-      buttonToClick = deepQuery('#edit-draft-button, .edit-draft-button, [aria-label*="draft" i]', row)
-        || deepQueryAll('ytcp-button, button, a', row).find(b => /edit\s*draft/i.test(b.textContent || b.getAttribute('aria-label') || ''));
+
+      // Wait longer on each retry (500ms, 800ms, 1200ms)
+      await sleep(500 + hoverAttempt * 300);
+
+      // Try extended selectors
+      buttonToClick = deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"], [aria-label*="draft" i], [aria-label*="Edit" i], [title*="draft" i]', row);
+
+      if (!buttonToClick) {
+        const buttons = deepQueryAll('ytcp-button, ytcp-icon-button, button, a, [role="button"]', row);
+        buttonToClick = buttons.find(b => {
+          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
+          return /edit\s*draft/i.test(text) || /edit\s*video/i.test(text) || text.includes('খসড়া');
+        });
+      }
+
+      // Fallback: look for icon buttons in action area
+      if (!buttonToClick) {
+        const actionBtns = deepQueryAll('ytcp-icon-button, [icon="icons:create"], [icon="icons:more-vert"]', row);
+        buttonToClick = actionBtns.find(b => {
+          const label = (b.getAttribute('aria-label') || b.getAttribute('title') || '').toLowerCase();
+          return label.includes('edit') || label.includes('draft');
+        });
+      }
+
+      // Last resort: try clicking the row itself to navigate to editor
+      if (!buttonToClick && hoverAttempt === 2) {
+        const titleLink = row.querySelector('a[href*="/video/"]');
+        if (titleLink && isElementVisible(titleLink)) {
+          buttonToClick = titleLink;
+        }
+      }
+
+      if (buttonToClick) editBtnFound = true;
     }
 
     if (!buttonToClick) throw new Error('Edit draft button not found');
     clickElement(buttonToClick);
 
-    // Step 2: Wait for editor dialog
+    // Step 2: Wait for editor dialog — expanded selectors for YouTube Studio UI updates
     const dialog = await waitFor(() => {
-      const d = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor');
-      return (d && isDialogOpen(d)) ? d : null;
-    }, 12000);
+      // Check multiple possible dialog element types
+      const selectors = [
+        'ytcp-uploads-dialog',
+        'ytcp-video-metadata-editor',
+        'ytcp-video-metadata-editor-advanced',
+        'ytcp-video-editor',
+        'ytcp-dialog[id*="dialog"]'
+      ];
+      for (const sel of selectors) {
+        const d = deepQuery(sel);
+        if (d && isDialogOpen(d)) return d;
+      }
+      // Also check by visibility: any large dialog-like element that just appeared
+      const genericDialog = deepQuery('ytcp-dialog');
+      if (genericDialog && isDialogOpen(genericDialog)) return genericDialog;
+      return null;
+    }, 15000);
 
     if (!dialog) throw new Error('Editor dialog did not open');
-    await sleep(600);
+    await sleep(800);
 
     // Step 3: Audience - "Not made for kids"
     if (state.config.notMadeForKids) {
       const notForKidsRadio = await waitFor(() => {
-        return deepQuery('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]', dialog)
-          || deepQueryAll('tp-yt-paper-radio-button', dialog).find(el =>
-              /not made for kids/i.test(el.textContent) || el.getAttribute('name') === 'VIDEO_MADE_FOR_KIDS_NOT_MFK'
-            );
+        // Try direct name attribute first
+        const directMatch = deepQuery('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]', dialog)
+          || deepQuery('[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]', dialog);
+        if (directMatch) return directMatch;
+
+        // Fallback: find by text content
+        const allRadios = deepQueryAll('tp-yt-paper-radio-button, [role="radio"]', dialog);
+        return allRadios.find(el =>
+          /not made for kids/i.test(el.textContent) ||
+          el.getAttribute('name') === 'VIDEO_MADE_FOR_KIDS_NOT_MFK'
+        ) || null;
       }, 5000);
 
       if (notForKidsRadio) {
@@ -703,7 +794,7 @@
     }
 
     // Step 4: Navigate to Visibility step
-    const stepperTabs = deepQueryAll('ytcp-stepper-step', dialog);
+    const stepperTabs = deepQueryAll('ytcp-stepper-step, [role="tab"]', dialog);
     const visTab = stepperTabs.find(tab => /visibility/i.test(tab.textContent)) || stepperTabs[stepperTabs.length - 1];
 
     if (visTab && isButtonEnabled(visTab)) {
@@ -714,10 +805,12 @@
     // Click "Next" if needed to reach visibility
     let nextTries = 0;
     while (nextTries < 6) {
-      const pubRadio = deepQuery(`tp-yt-paper-radio-button[name="${state.config.visibility}"]`, dialog);
+      const pubRadio = deepQuery(`tp-yt-paper-radio-button[name="${state.config.visibility}"]`, dialog)
+        || deepQuery(`[name="${state.config.visibility}"]`, dialog);
       if (pubRadio && isElementVisible(pubRadio)) break;
 
-      const nextBtn = deepQuery('#next-button', dialog);
+      const nextBtn = deepQuery('#next-button', dialog)
+        || deepQueryAll('ytcp-button', dialog).find(b => /^next$/i.test((b.textContent || '').trim()));
       if (nextBtn && isButtonEnabled(nextBtn)) {
         clickElement(nextBtn);
         await sleep(400);
@@ -727,15 +820,22 @@
       nextTries++;
     }
 
-    // Step 5: Select Visibility
+    // Step 5: Select Visibility — expanded selectors for YouTube Studio component changes
     const targetVisibility = state.config.visibility.toUpperCase();
     const visRadio = await waitFor(() => {
+      // Try direct name match first
       const r = deepQuery(`tp-yt-paper-radio-button[name="${targetVisibility}"]`, dialog)
-        || deepQueryAll('tp-yt-paper-radio-button', dialog).find(el =>
-            new RegExp(`^${targetVisibility}`, 'i').test(el.textContent.trim())
-          );
-      return (r && isElementVisible(r)) ? r : null;
-    }, 6000);
+        || deepQuery(`[name="${targetVisibility}"]`, dialog);
+      if (r && isElementVisible(r)) return r;
+
+      // Fallback: search all radio buttons by text content
+      const allRadios = deepQueryAll('tp-yt-paper-radio-button, [role="radio"], ytcp-ve-visibility-radio-button', dialog);
+      const match = allRadios.find(el =>
+        new RegExp(`^${targetVisibility}`, 'i').test((el.textContent || '').trim()) ||
+        el.getAttribute('name') === targetVisibility
+      );
+      return (match && isElementVisible(match)) ? match : null;
+    }, 8000);
 
     if (!visRadio) throw new Error(`Could not find ${targetVisibility} radio button`);
 
@@ -748,7 +848,7 @@
     // Step 6: Click Save/Publish/Done
     const doneBtn = await waitFor(() => {
       const btn = deepQuery('#done-button, #save-button, ytcp-button#done-button', dialog)
-        || deepQueryAll('ytcp-button', dialog).find(b => /^(publish|save|done)$/i.test(b.textContent.trim()));
+        || deepQueryAll('ytcp-button, button', dialog).find(b => /^(publish|save|done)$/i.test((b.textContent || '').trim()));
       return (btn && isButtonEnabled(btn)) ? btn : null;
     }, 8000);
 
@@ -758,24 +858,30 @@
 
     // Step 7: Wait for editor dialog and share dialog to fully close
     const dialogCloseStart = Date.now();
-    while (Date.now() - dialogCloseStart < 10000) {
-      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button');
+    while (Date.now() - dialogCloseStart < 12000) {
+      // Close share dialog if it appears
+      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button, ytcp-video-share-dialog ytcp-button, [aria-label="Close" i]');
       if (shareClose && isElementVisible(shareClose)) {
         clickElement(shareClose);
         await sleep(400);
       }
-      const activeDialog = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor');
+
+      // Check if the editor dialog has closed
+      const activeDialog = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor, ytcp-video-metadata-editor-advanced, ytcp-video-editor');
       if (!activeDialog || !isDialogOpen(activeDialog)) {
         break;
       }
+
+      // After 3 seconds, also try Escape key as fallback
       if (Date.now() - dialogCloseStart > 3000) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
       }
       await sleep(500);
     }
 
     // Safety cleanup of any leftover share dialog or backdrop
-    const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
+    const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], [aria-label="Close" i]');
     if (lingeringShare && isElementVisible(lingeringShare)) {
       clickElement(lingeringShare);
       await sleep(300);
