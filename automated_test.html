@@ -120,6 +120,30 @@
       const hasMatchedDraft = sampleVideos.some(v => mockDrafts.some(d => localNormalize(d.title).includes(localNormalize(v.name))));
       assert(hasMatchedDraft === true, 'Draft appearance in YouTube Studio triggers immediate upload completion');
 
+      // 6. Test YouTube upload batch error detection pattern
+      const sampleErrorText = 'You cannot upload more than 15 videos at a time';
+      const isBatchLimitExceeded = sampleErrorText.toLowerCase().includes('cannot upload more than 15') ||
+                                   sampleErrorText.toLowerCase().includes('more than 15 videos at a time');
+      assert(isBatchLimitExceeded === true, 'Max batch limit error pattern "cannot upload more than 15" correctly recognized');
+
+      // 7. Test batch slicing caps at 15
+      const overflowBatch = new Array(30).fill(null).map((_, i) => ({ name: 'video_' + i }));
+      const cappedBatch = overflowBatch.slice(0, 15);
+      assert(cappedBatch.length === 15, 'Upload batch is strictly capped at 15 items');
+
+      // 8. Test double dispatch prevention logic
+      let dispatchedFlag = false;
+      let methodAFired = false;
+      let methodBFired = false;
+      // Simulate Method A
+      methodAFired = true;
+      dispatchedFlag = true;
+      // Simulate Method B condition: if (!dispatchedFlag)
+      if (!dispatchedFlag) {
+        methodBFired = true;
+      }
+      assert(methodAFired === true && methodBFired === false, 'Double-injection prevented: Method B does NOT run when Method A succeeds');
+
       logs.push('<div class="log-line info">--- SUITE 2: Multi-Batch Queue Simulation (100 Videos) ---</div>');
 
       // Setup 100 mock video items

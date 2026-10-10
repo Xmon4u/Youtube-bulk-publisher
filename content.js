@@ -474,10 +474,15 @@
       }
 
       // Scan active upload dialog text directly
-      const uploadDialog = deepQuery('ytcp-uploads-dialog');
+      const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
       if (uploadDialog && isElementVisible(uploadDialog)) {
         const dialogText = uploadDialog.textContent || '';
-        if (/daily\s*upload\s*limit/i.test(dialogText) || /upload\s*more\s*videos\s*in\s*24\s*hours/i.test(dialogText)) {
+        if (
+          /daily\s*upload\s*limit/i.test(dialogText) ||
+          /upload\s*more\s*videos\s*in\s*24\s*hours/i.test(dialogText) ||
+          /more\s*than\s*15\s*videos/i.test(dialogText) ||
+          /cannot\s*upload\s*more\s*than/i.test(dialogText)
+        ) {
           detectedTexts.push(dialogText);
         }
       }
@@ -505,6 +510,21 @@
           title: 'Daily upload limit reached',
           message: 'You can upload more videos in 24 hours.',
           raw: 'Daily upload limit reached. You can upload more videos in 24 hours.'
+        };
+      }
+
+      // PATTERN 2: Max Batch Limit Exceeded (More than 15 videos)
+      if (
+        fullText.includes('cannot upload more than 15') ||
+        fullText.includes('more than 15 videos at a time') ||
+        fullText.includes('more than 15 videos') ||
+        fullText.includes('cannot upload more than')
+      ) {
+        return {
+          type: 'batch_limit_exceeded',
+          title: 'Max 15 Videos Per Batch',
+          message: 'YouTube allows maximum 15 videos at a time. The queue will upload in batches of 15.',
+          raw: 'You cannot upload more than 15 videos at a time'
         };
       }
 
@@ -1057,9 +1077,10 @@
       throw new Error('Could not find YouTube upload input or drop target element.');
     }
 
-    // Step 4: Populate DataTransfer
+    // Step 4: Populate DataTransfer (strictly capped at 15 for YouTube Studio limit)
+    const safeBatchFiles = (batchFiles || []).slice(0, 15);
     const dt = new DataTransfer();
-    for (const file of batchFiles) {
+    for (const file of safeBatchFiles) {
       dt.items.add(file);
     }
 
@@ -1068,7 +1089,9 @@
       try { ytFileInput.value = ''; } catch (e) {}
     }
 
-    // Step 5: Inject files — use multiple robust methods
+    // Step 5: Inject files — use Method A first, fallback to Method B ONLY if Method A fails
+    // CRITICAL: Previously both Method A AND Method B ran sequentially, injecting 15 + 15 = 30 files,
+    // which caused YouTube Studio to display "You cannot upload more than 15 videos at a time".
     let dispatched = false;
 
     // Method A: Native setter via Object.getOwnPropertyDescriptor (most reliable for Shadow DOM inputs)
@@ -1096,25 +1119,27 @@
       }
     }
 
-    // Method B: DragEvent drop on the drop target element
-    const targetElement = dropTarget || deepQuery('ytcp-uploads-dialog');
-    if (targetElement) {
-      try {
-        const dragInit = {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          dataTransfer: dt
-        };
-        targetElement.dispatchEvent(new DragEvent('dragenter', dragInit));
-        await sleep(100);
-        targetElement.dispatchEvent(new DragEvent('dragover', dragInit));
-        await sleep(100);
-        targetElement.dispatchEvent(new DragEvent('drop', dragInit));
-        dispatched = true;
-        console.log('[XMON] Dispatched drop event onto YouTube drop target');
-      } catch (err) {
-        console.warn('[XMON] Drop event error:', err);
+    // Method B: DragEvent drop ONLY as fallback if Method A was not dispatched
+    if (!dispatched) {
+      const targetElement = dropTarget || deepQuery('ytcp-uploads-dialog');
+      if (targetElement) {
+        try {
+          const dragInit = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            dataTransfer: dt
+          };
+          targetElement.dispatchEvent(new DragEvent('dragenter', dragInit));
+          await sleep(100);
+          targetElement.dispatchEvent(new DragEvent('dragover', dragInit));
+          await sleep(100);
+          targetElement.dispatchEvent(new DragEvent('drop', dragInit));
+          dispatched = true;
+          console.log('[XMON] Dispatched drop event onto YouTube drop target (fallback)');
+        } catch (err) {
+          console.warn('[XMON] Drop event fallback error:', err);
+        }
       }
     }
 
@@ -1148,6 +1173,7 @@
     if (!uploadStarted) {
       console.warn('[XMON] YouTube did not react. Retrying file injection...');
       const freshInput = await waitFor(() => findYouTubeUploadInput(), 3000);
+      let retryDispatched = false;
       if (freshInput) {
         try {
           const nativeInputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
@@ -1158,17 +1184,21 @@
           }
           freshInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
           freshInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+          retryDispatched = true;
           console.log('[XMON] Retry injection sent.');
         } catch (retryErr) {
           console.warn('[XMON] Retry injection failed:', retryErr);
         }
       }
 
-      if (targetElement) {
-        try {
-          const dragInit = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt };
-          targetElement.dispatchEvent(new DragEvent('drop', dragInit));
-        } catch (e) {}
+      if (!retryDispatched) {
+        const targetElement = dropTarget || deepQuery('ytcp-uploads-dialog');
+        if (targetElement) {
+          try {
+            const dragInit = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt };
+            targetElement.dispatchEvent(new DragEvent('drop', dragInit));
+          } catch (e) {}
+        }
       }
 
       await sleep(2000);
@@ -1318,6 +1348,13 @@
           renderUI();
           saveQueueState();
           throw new Error('DAILY_UPLOAD_LIMIT_REACHED');
+        } else if (detectedError.type === 'batch_limit_exceeded') {
+          console.warn('[XMON] Max batch limit exceeded detected on YouTube Studio dialog');
+          updateStatus('Batch limit exceeded (max 15). Closing dialog to recover...', 'warning');
+          showToast('YouTube limit: Max 15 videos per batch', 'warning', 4000);
+          await closeUploadDialog();
+          await sleep(1500);
+          throw new Error('BATCH_LIMIT_EXCEEDED');
         } else {
           showAnimatedNotification({
             type: detectedError.type,
@@ -1845,6 +1882,24 @@
           
           console.error('[XMON] Batch error:', batchErr);
           
+          if (batchErr.message === 'BATCH_LIMIT_EXCEEDED') {
+            console.warn('[XMON] Handling batch limit error: clamping batchSize to 15 and retrying waiting videos...');
+            state.batchSize = 15;
+            for (const video of currentBatchVideos) {
+              if (video.status === STATUS.UPLOADING) {
+                video.status = STATUS.WAITING;
+                video.error = null;
+              }
+            }
+            state.currentBatch = Math.max(0, state.currentBatch - 1);
+            showToast('Batch capped at 15 videos. Retrying batch...', 'info', 3000);
+            await closeStuckDialogs(true);
+            await sleep(2000);
+            renderUI();
+            saveQueueState();
+            continue;
+          }
+          
           const isDailyLimit = batchErr.message === 'DAILY_UPLOAD_LIMIT_REACHED' ||
                                 (state.activeAlert && state.activeAlert.type === 'daily_limit');
           
@@ -2097,6 +2152,7 @@
     fileInput.type = 'file';
     fileInput.id = 'xmon-file-input';
     fileInput.className = 'xmon-file-input';
+    fileInput.setAttribute('data-xmon-internal', 'true');
     fileInput.accept = 'video/*';
     fileInput.multiple = true;
     document.body.appendChild(fileInput);

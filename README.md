@@ -92,8 +92,11 @@ Youtube-bulk-publisher/
 
 ### v2.9.0 (2026-10-10)
 
-Critical bug-fix release fixing draft publishing failures ("Edit draft button not found" and "Editor dialog did not open"):
+Critical bug-fix release fixing draft publishing failures ("Edit draft button not found" and "Editor dialog did not open") and upload double-injection ("You cannot upload more than 15 videos at a time"):
 
+- **Upload Double-Injection Fix**: `uploadBatchToYouTube()` previously ran Method A (native input setter) and Method B (drag/drop event) sequentially. When uploading a batch of 15 videos, both dispatched 15 files each, resulting in 30 files being sent to YouTube Studio and triggering the error *"You cannot upload more than 15 videos at a time"*. Method B now executes strictly as a fallback only when Method A is unavailable or fails. Additionally, `dt.files` is strictly sliced to `Math.min(batchFiles.length, 15)`.
+- **Max Batch Limit Exceeded Auto-Recovery**: Added detection in `detectYouTubeUploadError()` for YouTube's *"You cannot upload more than 15 videos at a time"* error. When detected, the dialog is safely closed, batch size is clamped to 15, and the batch is automatically retried without failing the entire queue.
+- **Internal File Input Isolation**: Marked internal `#xmon-file-input` with `data-xmon-internal="true"` to prevent `findYouTubeUploadInput()` from ever selecting XMON's own file input during upload dialog detection.
 - **Edit Draft Button Retry Loop**: `publishSingleDraft()` now retries up to 3 times with increasing hover delays (500ms → 800ms → 1200ms) and dispatches both `mouseenter` and `mouseover` events before searching for the button. This fixes the most common error where YouTube Studio's virtualized row didn't render action buttons fast enough.
 - **Extended Edit Button Selectors**: Added `[aria-label*="Edit" i]`, `ytcp-icon-button`, `[role="button"]`, three-dot menu icon selectors, and `a[href*="/video/"]` title link fallback. Covers YouTube Studio UI changes where the direct "Edit draft" button was replaced or restructured.
 - **Scroll-Into-View Before Hover**: Each retry attempt now scrolls the draft row into the viewport center before hovering, ensuring off-screen rows receive the hover event correctly.
