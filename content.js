@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.7.0
+   Content Script v2.8.0
    ============================================================ */
 
 (() => {
@@ -57,9 +57,11 @@
   function deepQuery(selector, root = document) {
     if (!root) return null;
 
-    // Handle comma-separated list of selectors
+    // Handle comma-separated list of selectors — split ONLY on commas not inside brackets
+    // Use a simple approach: split on ', ' or ',' but only when no space-based compound selectors
     if (selector.includes(',')) {
       const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
+      // Only use comma-split if all parts are simple (no descendant selectors that conflict)
       for (const part of parts) {
         const found = deepQuery(part, root);
         if (found) return found;
@@ -68,31 +70,37 @@
     }
 
     // Handle descendant selectors across shadow boundaries (e.g. "ytcp-uploads-dialog #close-button")
-    const spaceIdx = selector.indexOf(' ');
+    // Only apply shadow-boundary traversal when the selector has exactly one space-separated pair
+    const trimmed = selector.trim();
+    const spaceIdx = trimmed.indexOf(' ');
     if (spaceIdx > 0) {
-      const head = selector.substring(0, spaceIdx).trim();
-      const tail = selector.substring(spaceIdx + 1).trim();
+      const head = trimmed.substring(0, spaceIdx).trim();
+      const tail = trimmed.substring(spaceIdx + 1).trim();
+      // Skip if tail still contains spaces (multi-level descendant) — let querySelector handle it
       try {
-        const nativeMatch = root.querySelector?.(selector);
+        const nativeMatch = root.querySelector?.(trimmed);
         if (nativeMatch) return nativeMatch;
       } catch (e) {}
 
-      const headEl = deepQuery(head, root);
-      if (headEl) {
-        const foundInHead = deepQuery(tail, headEl);
-        if (foundInHead) return foundInHead;
+      // Only try shadow traversal for simple "parent child" pairs
+      if (!tail.includes(' ')) {
+        const headEl = deepQuery(head, root);
+        if (headEl) {
+          const foundInHead = deepQuery(tail, headEl);
+          if (foundInHead) return foundInHead;
+        }
       }
     }
 
     // Direct querySelector on root
     try {
-      const direct = root.querySelector?.(selector);
+      const direct = root.querySelector?.(trimmed);
       if (direct) return direct;
     } catch (e) {}
 
     // Check root's own shadowRoot if root is a custom element
     if (root.shadowRoot) {
-      const inShadow = deepQuery(selector, root.shadowRoot);
+      const inShadow = deepQuery(trimmed, root.shadowRoot);
       if (inShadow) return inShadow;
     }
 
@@ -100,7 +108,7 @@
     const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
     for (const el of children) {
       if (el.shadowRoot) {
-        const inChildShadow = deepQuery(selector, el.shadowRoot);
+        const inChildShadow = deepQuery(trimmed, el.shadowRoot);
         if (inChildShadow) return inChildShadow;
       }
     }
@@ -379,7 +387,7 @@
       <div class="xmon-toast-body">
         <div class="xmon-toast-title">${escapeHtml(title)}</div>
         <div class="xmon-toast-text">${escapeHtml(message)}</div>
-        ${isDailyLimit ? '<div class="xmon-toast-sub">YouTube quota reached â€¢ Queue paused safely for 24 hours</div>' : ''}
+        ${isDailyLimit ? '<div class="xmon-toast-sub">YouTube quota reached \u2022 Queue paused safely for 24 hours</div>' : ''}
       </div>
       <button class="xmon-toast-close" type="button" title="Close">${ICONS.x}</button>
       ${!persistent ? `<div class="xmon-toast-progress-bar" style="animation-duration: ${duration}ms"></div>` : ''}
@@ -1132,9 +1140,14 @@
         const cBtns = deepQueryAll('ytcp-button, button', confirmDialog);
         for (const cBtn of cBtns) {
           const text = (cBtn.textContent || '').toLowerCase().trim();
-          const isSafe = text.includes('save') || text.includes('draft') || text === 'close' || text.includes('yes') || text.includes('proceed');
-          const isDestructive = text.includes('cancel upload') || text.includes('discard') || text.includes('abandon');
-          if (isSafe && !isDestructive && isElementVisible(cBtn)) {
+          // First check for destructive actions to avoid accidentally clicking them
+          const isDestructive = text.includes('cancel upload') || text.includes('discard') || text.includes('abandon') || text.includes('delete');
+          // Safe actions: save as draft, keep, close (non-destructive)
+          const isSafe = !isDestructive && (
+            text.includes('save') || text.includes('draft') || text.includes('keep') ||
+            text === 'close' || text.includes('yes') || text.includes('proceed')
+          );
+          if (isSafe && isElementVisible(cBtn)) {
             console.log('[XMON] Clicking safe confirmation prompt button:', text);
             clickElement(cBtn);
             await sleep(700);
@@ -1429,7 +1442,7 @@
     updateStatus(`Verifying drafts in YouTube Studio...`, 'active');
     
     // Ensure we are on Content page (Shorts tab first for Shorts, or Videos)
-    const initialTab = window.location.href.includes('/short') ? 'shorts' : 'shorts';
+    const initialTab = window.location.href.includes('/short') ? 'shorts' : 'videos';
     await navigateToContentSafe(initialTab);
     await sleep(2000);
 
@@ -2583,8 +2596,11 @@
     if (newVideos.length > 0) {
       state.queue.push(...newVideos);
       state.totalCount = state.queue.length;
-      const waitingCount = state.queue.filter(v => v.status === STATUS.WAITING || v.status === STATUS.FAILED).length;
-      state.totalBatches = Math.ceil(waitingCount / state.batchSize);
+      // Calculate total batches based on all non-completed videos
+      const processableCount = state.queue.filter(v =>
+        v.status === STATUS.WAITING || v.status === STATUS.FAILED
+      ).length;
+      state.totalBatches = Math.ceil(processableCount / state.batchSize);
       
       showToast(`${newVideos.length} video(s) added to queue.`, 'success');
       updateStatus(`${state.queue.length} video(s) in queue. Ready to start.`, 'idle');
@@ -2597,8 +2613,15 @@
   // ============================================================
   // PERIODIC UI UPDATES
   // ============================================================
+  let _periodicUpdateIntervalId = null;
+
   function startPeriodicUpdates() {
-    setInterval(() => {
+    // Prevent stacking multiple intervals on SPA navigation
+    if (_periodicUpdateIntervalId !== null) {
+      clearInterval(_periodicUpdateIntervalId);
+      _periodicUpdateIntervalId = null;
+    }
+    _periodicUpdateIntervalId = setInterval(() => {
       // Update drafts count on publish tab
       const draftsCountEl = document.getElementById('xmon-drafts-count');
       if (draftsCountEl) {
@@ -2631,6 +2654,8 @@
   // ============================================================
   // INITIALIZE
   // ============================================================
+  let _spaCheckIntervalId = null;
+
   function init() {
     // Only activate on YouTube Studio
     if (!window.location.hostname.includes('studio.youtube.com')) return;
@@ -2641,7 +2666,11 @@
   }
 
   // Check periodically to attach widget (handles SPA navigation)
-  setInterval(() => {
+  // Use a single interval, cleared and re-set if needed
+  if (_spaCheckIntervalId !== null) {
+    clearInterval(_spaCheckIntervalId);
+  }
+  _spaCheckIntervalId = setInterval(() => {
     if (window.location.hostname === 'studio.youtube.com') {
       if (!document.getElementById('xmon-widget')) {
         init();

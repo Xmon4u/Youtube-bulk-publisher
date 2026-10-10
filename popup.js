@@ -75,8 +75,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Focus existing YouTube Studio tab
             const tab = tabs[0];
             chrome.tabs.update(tab.id, { active: true }, () => {
-              if (chrome.windows && tab.windowId) {
-                chrome.windows.update(tab.windowId, { focused: true });
+              // Bring the window containing the tab to focus
+              try {
+                if (chrome.windows && tab.windowId) {
+                  chrome.windows.update(tab.windowId, { focused: true });
+                }
+              } catch (e) {
+                // chrome.windows may be restricted in some contexts — safe to ignore
               }
               window.close();
             });

@@ -90,6 +90,18 @@ Youtube-bulk-publisher/
 
 ## Changelog
 
+### v2.8.0 (2026-10-10)
+
+Bug-fix release addressing 6 logic errors found during full code audit:
+
+- **`deepQuery` Shadow DOM Traversal Fix**: The descendant-selector parsing in `deepQuery()` previously tried to apply shadow-boundary traversal for multi-level descendant paths (e.g. `"a b c"`), causing incorrect element resolution. Now only simple `"parent child"` pairs receive shadow traversal; deeper paths are delegated to native `querySelector`.
+- **`verifyAndSyncBatchDrafts` Wrong Tab Navigation**: The `initialTab` calculation always resolved to `'shorts'` regardless of the current URL, meaning the extension never navigated to the Videos tab when uploading non-Shorts. Now correctly switches to `'shorts'` when on a Shorts URL and `'videos'` otherwise.
+- **`closeUploadDialog` Confirmation Safety**: The safe/destructive button detection logic was applied in the wrong order — `isSafe` was evaluated before checking `isDestructive`, allowing `'close'` (a sub-string of `'cancel upload close'`) to match destructively. Reordered so destructive check always runs first; added `'keep'` and `'delete'` patterns.
+- **Toast Special-Character Encoding**: The daily-limit toast displayed a mojibake bullet character (`â€¢`) due to a raw UTF-8 byte sequence in the template literal. Replaced with the Unicode escape `\u2022` (•) for correct rendering in all environments.
+- **`startPeriodicUpdates` Interval Leak**: Calling `init()` more than once during SPA navigation stacked multiple `setInterval` timers, causing duplicate error checks and draft-count updates. Both intervals (`_periodicUpdateIntervalId` and `_spaCheckIntervalId`) are now tracked and cleared before being re-created.
+- **`handleFileDrop` Batch Count**: `totalBatches` was recalculated using only `WAITING | FAILED` videos, which is correct, but the comment was misleading. Clarified the intent and ensured consistency with `processQueue`.
+- **`background.js` Broken `OPEN_STUDIO` URL**: The `OPEN_STUDIO` message handler opened `https://studio.youtube.com/channel/UC/videos/upload`, where `/UC/` is a placeholder channel ID that results in a 404. Changed to `https://studio.youtube.com`.
+
 ### v2.7.0 (2026-10-09)
 
 Fixed multi-batch queue stall after first batch and implemented persistent panel minimize/maximize state:

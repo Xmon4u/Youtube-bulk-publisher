@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'OPEN_STUDIO':
-      chrome.tabs.create({ url: 'https://studio.youtube.com/channel/UC/videos/upload' });
+      chrome.tabs.create({ url: 'https://studio.youtube.com' });
       sendResponse({ success: true });
       break;
 
