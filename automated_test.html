@@ -37,15 +37,30 @@
     }
 
     // Mock chrome extension environment for content.js
+    const mockStorage = {};
     window.chrome = {
       runtime: {
         getURL: (path) => path,
-        onMessage: { addListener: () => {} }
+        onMessage: { addListener: () => {} },
+        getManifest: () => ({ version: '2.9.1' })
       },
       storage: {
         local: {
-          set: (data, cb) => { if (cb) cb(); },
-          get: (keys, cb) => { if (cb) cb({}); }
+          set: (data, cb) => {
+            Object.assign(mockStorage, data);
+            if (cb) cb();
+          },
+          get: (keys, cb) => {
+            const res = {};
+            if (Array.isArray(keys)) {
+              keys.forEach(k => { if (k in mockStorage) res[k] = mockStorage[k]; });
+            } else if (typeof keys === 'string') {
+              if (keys in mockStorage) res[keys] = mockStorage[keys];
+            } else {
+              Object.assign(res, mockStorage);
+            }
+            if (cb) cb(res);
+          }
         }
       }
     };
@@ -56,6 +71,7 @@
 
   <script>
     async function runTestSuite() {
+      try {
       logs.push('<div class="log-line info">--- SUITE 1: Core Utilities & State Transitions ---</div>');
 
       // 1. Script injection
@@ -357,6 +373,162 @@
       assert(finalFailed === 1, 'Exactly 1 failed video recorded (video 30)');
       assert(finalWaiting === 0, '0 videos waiting (entire queue finished)');
 
+      logs.push('<div class="log-line info">--- SUITE 6: Real Phase A Functions Verification via __XMON_DEV__ ---</div>');
+      const dev = window.__XMON_DEV__;
+      assert(!!dev, 'window.__XMON_DEV__ is exposed and available');
+
+      // A1: findDraftRows strict filtering
+      const testRowDraft = document.createElement('ytcp-video-row');
+      testRowDraft.setAttribute('video-id', 'test_draft_1');
+      testRowDraft.innerHTML = '<div class="video-title">my_real_draft</div><div class="cell-body visibility">Draft</div>';
+      sandbox.appendChild(testRowDraft);
+
+      const testRowPublic = document.createElement('ytcp-video-row');
+      testRowPublic.setAttribute('video-id', 'test_public_1');
+      testRowPublic.innerHTML = '<div class="video-title">My Public Video</div><div class="cell-body visibility">Public</div><button aria-label="Edit">Edit</button>';
+      sandbox.appendChild(testRowPublic);
+
+      const testRowPublished = document.createElement('ytcp-video-row');
+      testRowPublished.setAttribute('video-id', 'test_pub_skip');
+      testRowPublished.setAttribute('data-xmon-status', 'published');
+      testRowPublished.innerHTML = '<div class="video-title">Published Video</div><div class="cell-body visibility">Draft</div>';
+      sandbox.appendChild(testRowPublished);
+
+      const testRowFailed = document.createElement('ytcp-video-row');
+      testRowFailed.setAttribute('video-id', 'test_fail_skip');
+      testRowFailed.setAttribute('data-xmon-status', 'failed');
+      testRowFailed.innerHTML = '<div class="video-title">Failed Video</div><div class="cell-body visibility">Draft</div>';
+      sandbox.appendChild(testRowFailed);
+
+      const detectedDrafts = dev.findDraftRows();
+      const foundDraft1 = detectedDrafts.some(d => d.videoId === 'test_draft_1');
+      const foundPublic = detectedDrafts.some(d => d.videoId === 'test_public_1');
+      const foundPubSkip = detectedDrafts.some(d => d.videoId === 'test_pub_skip');
+      const foundFailSkip = detectedDrafts.some(d => d.videoId === 'test_fail_skip');
+
+      assert(foundDraft1 === true, 'A1: Draft row with Draft visibility is detected by real findDraftRows');
+      assert(foundPublic === false, 'A1: Public row with generic Edit button is REJECTED by real findDraftRows');
+      assert(foundPubSkip === false, 'A1: data-xmon-status="published" row is skipped');
+      assert(foundFailSkip === false, 'A1: data-xmon-status="failed" row is skipped');
+
+      // A2: Title matching strict rules & Unicode support
+      assert(dev.isTitleMatching('video_1.mp4', 'video_10') === false, 'A2: video_1 does NOT match video_10');
+      assert(dev.isTitleMatching('short_001.mp4', 'short_0010') === false, 'A2: short_001 does NOT match short_0010');
+      assert(dev.isTitleMatching('my_short_video_01.mp4', 'my_short_video_02') === false, 'A2: Same prefix files do not match across numbers');
+      assert(dev.isTitleMatching('my_short_video_01.mp4', 'my_short_video_01') === true, 'A2: Exact title matches');
+      assert(dev.isTitleMatching('ভিডিও ০১.mp4', 'ভিডিও ০১') === true, 'A2: Unicode (Bengali) title matches');
+      assert(dev.isTitleMatching('video_1.mp4', 'video_1 2', true) === true, 'A2: Clear delimited YouTube copy suffix matches');
+
+      // A3: verifyAndSyncBatchDrafts strict draft verification (no Positional Assignment Pass 2)
+      const mockBatchVideos = [
+        { id: 'bv1', name: 'my_real_draft.mp4', status: 'uploading' },
+        { id: 'bv2', name: 'missing_unuploaded_video.mp4', status: 'uploading' }
+      ];
+      // Run verifyAndSyncBatchDrafts with 200ms timeout
+      await dev.verifyAndSyncBatchDrafts(mockBatchVideos, 200);
+      assert(mockBatchVideos[0].status === 'uploaded', 'A3: Title-matched video successfully marked UPLOADED');
+      assert(mockBatchVideos[1].status === 'failed', 'A3: Unmatched video strictly marked FAILED (never UPLOADED)');
+      assert(mockBatchVideos[1].error.includes('Draft not found on YouTube Studio'), 'A3: Error message explains draft not found');
+
+      // A5: Concurrency guard in processQueue
+      dev.__setState({ isRunning: true, runToken: 42 });
+      const initialToken = dev.state.runToken;
+      await dev.processQueue();
+      assert(dev.state.runToken === initialToken, 'A5: processQueue returns early and does NOT run second loop when isRunning is true');
+      dev.__setState({ isRunning: false });
+
+      // A7: Batch limit error pattern strictly narrowed
+      const errorGeneral = 'You cannot upload more than 500 files this week';
+      const isGeneralLimit = errorGeneral.toLowerCase().includes('cannot upload more than 15') ||
+                             errorGeneral.toLowerCase().includes('more than 15 videos');
+      assert(isGeneralLimit === false, 'A7: Generic "cannot upload more than" without 15 is NOT identified as batch_limit_exceeded');
+
+      // A8: Queue persistence & restoration with needs-file status
+      dev.__setState({
+        queue: [
+          { id: 'pers_1', name: 'pers_video.mp4', size: 12345, status: 'waiting', file: null, error: null }
+        ],
+        activeAlert: { type: 'daily_limit', title: 'Daily Limit', message: 'Test' },
+        statusMessage: 'Persisted Status Message',
+        batchSize: 15
+      });
+      dev.saveQueueState();
+      dev.__setState({ queue: [] });
+      dev.restoreQueueState();
+      await new Promise(r => setTimeout(r, 60));
+      assert(dev.state.queue.length === 1, 'A8: queueMeta restored into queue array');
+      assert(dev.state.queue[0].status === 'needs-file', 'A8: Persisted waiting item restored with status "needs-file"');
+      assert(dev.state.activeAlert?.type === 'daily_limit', 'A8: activeAlert restored from storage');
+      assert(dev.state.statusMessage === 'Persisted Status Message', 'A8: statusMessage restored from storage');
+
+      // --- SUITE 7: Phase B Security & Robustness Tests ---
+      logs.push('<div class="log-line info">--- SUITE 7: Phase B Security, Sanitization & Counters ---</div>');
+
+      // B1: HTML Injection Sanitization
+      const xssSnippet = '<img src=x onerror=alert(1)>';
+      assert(dev.escapeHtml(xssSnippet).includes('&lt;img') && !dev.escapeHtml(xssSnippet).includes('<img'), 'B1: escapeHtml sanitizes script/img tags');
+
+      dev.__setState({
+        queue: [
+          { id: 'xss_id_1', name: 'Safe Video.mp4', status: 'waiting' },
+          { id: 'xss_id_2', name: xssSnippet, status: 'failed' }
+        ],
+        statusMessage: '<b id="evil-status">Dangerous Message</b>',
+        activeTab: 'queue'
+      });
+      const widgetHtml = dev.buildWidgetHTML();
+      assert(!widgetHtml.includes('<img src=x'), 'B1: buildWidgetHTML does not interpolate unescaped queue item names');
+      assert(widgetHtml.includes('&lt;img src=x'), 'B1: buildWidgetHTML escapes queue item name in title and text');
+      assert(!widgetHtml.includes('<b id="evil-status">'), 'B1: buildWidgetHTML escapes statusMessage');
+      assert(widgetHtml.includes('&lt;b id=&quot;evil-status&quot;&gt;'), 'B1: statusMessage is escaped in HTML');
+
+      // B4: File Type Filtering (MIME & extension)
+      dev.__setState({ queue: [] });
+      const mockFiles = [
+        { name: 'document.pdf', type: 'application/pdf', size: 100 },
+        { name: 'clip.mp4', type: 'video/mp4', size: 200 },
+        { name: 'recording.mkv', type: '', size: 300 }, // empty MIME type, valid extension
+        { name: 'notes.txt', type: 'text/plain', size: 50 },
+        { name: 'animation.webm', type: 'video/webm', size: 400 }
+      ];
+      dev.handleFileDrop(mockFiles);
+      assert(dev.state.queue.length === 3, 'B4: Only 3 video files accepted (including .mkv with empty MIME type)');
+      assert(dev.state.queue.some(v => v.name === 'clip.mp4'), 'B4: clip.mp4 accepted');
+      assert(dev.state.queue.some(v => v.name === 'recording.mkv'), 'B4: recording.mkv with empty MIME type accepted by extension');
+      assert(dev.state.queue.some(v => v.name === 'animation.webm'), 'B4: animation.webm accepted');
+      assert(!dev.state.queue.some(v => v.name === 'document.pdf'), 'B4: document.pdf skipped');
+      assert(!dev.state.queue.some(v => v.name === 'notes.txt'), 'B4: notes.txt skipped');
+
+      // B5: Counter Consistency & Batch 8/7 Prevention
+      dev.__setState({
+        batchSize: 5,
+        currentBatch: 3,
+        queue: [
+          { id: 'c1', name: 'v1.mp4', status: 'uploaded' },
+          { id: 'c2', name: 'v2.mp4', status: 'uploaded' },
+          { id: 'c3', name: 'v3.mp4', status: 'published' },
+          { id: 'c4', name: 'v4.mp4', status: 'failed' },
+          { id: 'c5', name: 'v5.mp4', status: 'waiting' },
+          { id: 'c6', name: 'v6.mp4', status: 'waiting' }
+        ]
+      });
+      dev.recomputeCounters();
+      assert(dev.state.totalCount === 6, 'B5: totalCount matches queue length');
+      assert(dev.state.uploadedCount === 3, 'B5: uploadedCount correctly sums uploaded + published');
+      assert(dev.state.publishedCount === 1, 'B5: publishedCount correctly counts published');
+      assert(dev.state.failedCount === 1, 'B5: failedCount correctly counts failed');
+      // With 6 items and batchSize 5, total batches is ceil(6/5) = 2. But currentBatch is 3, so totalBatches is at least 3 (never 3 / 2 or 8 / 7)
+      assert(dev.state.totalBatches >= dev.state.currentBatch, 'B5: totalBatches is never smaller than currentBatch (prevents Batch 8/7 bug)');
+
+      // B5: Standalone draft publishing stats isolation
+      dev.__setState({
+        standalonePublished: 5,
+        standaloneFailed: 2
+      });
+      const pubTabHtml = dev.buildWidgetHTML();
+      assert(pubTabHtml.includes('<span class="xmon-stat-val success">5</span>'), 'B5: Publish tab displays standalonePublished');
+      assert(pubTabHtml.includes('<span class="xmon-stat-val danger">2</span>'), 'B5: Publish tab displays standaloneFailed');
+
       // Final summary
       resultsEl.innerHTML = `
         <div style="font-size: 16px; margin-bottom: 12px;">
@@ -369,6 +541,10 @@
 
       // Return status for automated test runner
       window.__TEST_RESULTS__ = { passed, failed, total: passed + failed };
+      } catch (err) {
+        console.error('Test Suite Error:', err);
+        resultsEl.innerHTML = `<div class="fail">Test Suite Execution Error: ${err.message}<pre>${err.stack}</pre></div>`;
+      }
     }
 
     window.addEventListener('DOMContentLoaded', runTestSuite);

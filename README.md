@@ -90,6 +90,23 @@ Youtube-bulk-publisher/
 
 ## Changelog
 
+### v2.9.1 (2026-10-12)
+
+Comprehensive reliability and resilience release addressing all Phase 1–5 audit findings:
+
+- **Per-Item Upload Completion Detection (P1-1)**: Replaced premature dialog-wide text matching with strict per-item tracking (`ytcp-uploads-file-item` state extraction). Dialog is never closed while files are actively uploading.
+- **Robust Per-Item Progress Matching (P1-2)**: Enhanced file title extraction from YouTube upload rows with normalized matching and word-boundary fallbacks.
+- **Adaptive Draft Verification Window & Dual-Tab Scanning (P1-3)**: Verification window scales dynamically with batch size (`max(60s, 8s * batchCount)` up to 180s) and scans both Shorts and Videos tabs on every poll. Snapshotting prevents claiming pre-existing drafts.
+- **Verified Draft Publishing Flow (P1-4)**: Eliminated premature Escape key dispatch during draft save; verifies that the draft row no longer shows Draft status before declaring success.
+- **Multi-Panel Dismiss Alert ID Fix (P2-1)**: Replaced duplicate `#xmon-dismiss-alert-btn` IDs with `.xmon-dismiss-alert-btn` class, ensuring dismiss buttons work reliably in both Upload and Queue panels.
+- **Notification De-duplication (P2-2)**: Implemented per-batch toast suppression to prevent spamming notifications during rapid 1.5s polling loops.
+- **False-Positive Error Filtering (P2-3)**: Isolated dedicated YouTube error element selectors from dialog-wide text checks so video filenames containing keywords like "error" or "already uploaded" never trigger false failure states.
+- **SPA Route Safety (P2-4)**: Replaced unsafe History `pushState` fallbacks with verified YouTube Studio SPA navigation.
+- **Queue Limits & Needs-File Clarity (P2-6)**: Upload limit calculations only count active/pending videos; restored sessions clearly indicate `needs-file` status with actionable guidance.
+- **Dialog Detection & Teardown (P2-7, P2-8)**: Enforced strict modal identity checks to reject stale background modals; queue stopping cleanly tears down open upload dialogs.
+- **CSP & Extension Optimization (P4)**: Streamlined `manifest.json` permissions, removed dead background queue messaging, and removed remote Google Fonts to comply with strict CSP rules.
+- **Live Diagnostics & Selector Health (P5)**: Integrated ring-buffer debug logger (`getDebugLog`) and automated YouTube Studio DOM selector health checks (`runSelectorHealthCheck`) directly into the Config tab.
+
 ### v2.9.0 (2026-10-10)
 
 Critical bug-fix release fixing draft publishing failures ("Edit draft button not found" and "Editor dialog did not open") and upload double-injection ("You cannot upload more than 15 videos at a time"):

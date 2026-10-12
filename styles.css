@@ -4,7 +4,10 @@
    ============================================================ */
 
 /* --- Google Fonts Import --- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+/* Google Fonts is loaded by the extension's popup.html for the popup UI.
+   styles.css is injected into YouTube Studio as a content script and should
+   NOT use remote @import (blocked by Studio's CSP). Inter is listed as a
+   system-font fallback in --xmon-font below. */
 
 /* --- CSS Custom Properties --- */
 :root {
@@ -1337,6 +1340,43 @@
   0% { opacity: 1; transform: translateX(0) scale(1); }
   100% { opacity: 0; transform: translateX(30px) scale(0.95); }
 }
+
+/* P4: Missing keyframe — toast progress bar animation duration is set via JS style attribute */
+@keyframes xmon-toast-timeout {
+  0%   { width: 100%; }
+  100% { width: 0%; }
+}
+
+/* P4: Toast type accent colors (success / warning / info) */
+.xmon-toast-card.success .xmon-toast-icon-box {
+  background: rgba(46, 204, 113, 0.15);
+  border-color: rgba(46, 204, 113, 0.3);
+  color: #2ecc71;
+}
+.xmon-toast-card.success .xmon-toast-progress-bar {
+  background: linear-gradient(90deg, #2ecc71, #27ae60);
+}
+.xmon-toast-card.success .xmon-toast-title { color: #2ecc71; }
+
+.xmon-toast-card.warning .xmon-toast-icon-box {
+  background: rgba(243, 156, 18, 0.15);
+  border-color: rgba(243, 156, 18, 0.3);
+  color: #f39c12;
+}
+.xmon-toast-card.warning .xmon-toast-progress-bar {
+  background: linear-gradient(90deg, #f39c12, #e67e22);
+}
+.xmon-toast-card.warning .xmon-toast-title { color: #f39c12; }
+
+.xmon-toast-card.info .xmon-toast-icon-box {
+  background: rgba(52, 152, 219, 0.15);
+  border-color: rgba(52, 152, 219, 0.3);
+  color: #3498db;
+}
+.xmon-toast-card.info .xmon-toast-progress-bar {
+  background: linear-gradient(90deg, #3498db, #2980b9);
+}
+.xmon-toast-card.info .xmon-toast-title { color: #3498db; }
 
 /* --- Custom Scrollbar --- */
 #xmon-widget ::-webkit-scrollbar {

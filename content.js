@@ -1,6 +1,6 @@
 /* ============================================================
    XMON YouTube Shorts Bulk Upload & Auto Publisher
-   Content Script v2.9.0
+   Content Script v2.9.1
    ============================================================ */
 
 (() => {
@@ -54,42 +54,80 @@
   // ============================================================
   // UTILITY FUNCTIONS (preserved from v1)
   // ============================================================
+  // ============================================================
+  // SELECTOR TOKENIZER (P2-5 / P3-3)
+  // Splits a CSS selector string on top-level commas or spaces only
+  // (i.e. NOT inside [], (), or quoted strings).
+  // ============================================================
+  function splitTopLevel(selector, splitChar) {
+    const parts = [];
+    let depth = 0;
+    let inQuote = null;
+    let current = '';
+    for (let i = 0; i < selector.length; i++) {
+      const ch = selector[i];
+      if (inQuote) {
+        current += ch;
+        if (ch === inQuote) inQuote = null;
+      } else if (ch === '"' || ch === "'") {
+        inQuote = ch;
+        current += ch;
+      } else if (ch === '(' || ch === '[') {
+        depth++;
+        current += ch;
+      } else if (ch === ')' || ch === ']') {
+        depth--;
+        current += ch;
+      } else if (depth === 0 && ch === splitChar) {
+        // skip trailing spaces after comma
+        const trimmed = current.trim();
+        if (trimmed) parts.push(trimmed);
+        current = '';
+        // skip the space that follows a comma split
+        if (splitChar === ',' && selector[i + 1] === ' ') i++;
+      } else {
+        current += ch;
+      }
+    }
+    const trimmed = current.trim();
+    if (trimmed) parts.push(trimmed);
+    return parts;
+  }
+
   function deepQuery(selector, root = document) {
     if (!root) return null;
+    const trimmed = selector.trim();
 
-    // Handle comma-separated list of selectors — split ONLY on commas not inside brackets
-    // Use a simple approach: split on ', ' or ',' but only when no space-based compound selectors
-    if (selector.includes(',')) {
-      const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
-      // Only use comma-split if all parts are simple (no descendant selectors that conflict)
-      for (const part of parts) {
+    // P2-5: Split comma list at top level only (not inside [] or quotes)
+    if (trimmed.includes(',')) {
+      for (const part of splitTopLevel(trimmed, ',')) {
         const found = deepQuery(part, root);
         if (found) return found;
       }
       return null;
     }
 
-    // Handle descendant selectors across shadow boundaries (e.g. "ytcp-uploads-dialog #close-button")
-    // Only apply shadow-boundary traversal when the selector has exactly one space-separated pair
-    const trimmed = selector.trim();
-    const spaceIdx = trimmed.indexOf(' ');
-    if (spaceIdx > 0) {
-      const head = trimmed.substring(0, spaceIdx).trim();
-      const tail = trimmed.substring(spaceIdx + 1).trim();
-      // Skip if tail still contains spaces (multi-level descendant) — let querySelector handle it
+    // Descendant across shadow boundaries: split on first top-level space
+    const spaceParts = splitTopLevel(trimmed, ' ');
+    if (spaceParts.length === 2) {
+      // Try native first (light DOM)
       try {
         const nativeMatch = root.querySelector?.(trimmed);
         if (nativeMatch) return nativeMatch;
       } catch (e) {}
-
-      // Only try shadow traversal for simple "parent child" pairs
-      if (!tail.includes(' ')) {
-        const headEl = deepQuery(head, root);
-        if (headEl) {
-          const foundInHead = deepQuery(tail, headEl);
-          if (foundInHead) return foundInHead;
-        }
+      // Cross-shadow traversal for exactly one level
+      const [head, tail] = spaceParts;
+      const headEl = deepQuery(head, root);
+      if (headEl) {
+        const found = deepQuery(tail, headEl);
+        if (found) return found;
       }
+    } else if (spaceParts.length > 2) {
+      // Multi-level — let native handle it, then give up (shadow not traversed for >2 levels)
+      try {
+        const nativeMatch = root.querySelector?.(trimmed);
+        if (nativeMatch) return nativeMatch;
+      } catch (e) {}
     }
 
     // Direct querySelector on root
@@ -98,16 +136,16 @@
       if (direct) return direct;
     } catch (e) {}
 
-    // Check root's own shadowRoot if root is a custom element
+    // Root's own shadowRoot
     if (root.shadowRoot) {
       const inShadow = deepQuery(trimmed, root.shadowRoot);
       if (inShadow) return inShadow;
     }
 
-    // Search in all child elements and their shadowRoots
+    // P3-3: Only traverse shadowRoots of custom elements (localName includes '-')
     const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
     for (const el of children) {
-      if (el.shadowRoot) {
+      if (el.shadowRoot && el.localName.includes('-')) {
         const inChildShadow = deepQuery(trimmed, el.shadowRoot);
         if (inChildShadow) return inChildShadow;
       }
@@ -118,67 +156,61 @@
   function deepQueryAll(selector, root = document) {
     if (!root) return [];
     const results = [];
+    const trimmed = selector.trim();
 
-    // Handle comma-separated selectors
-    if (selector.includes(',')) {
-      const parts = selector.split(',').map(s => s.trim()).filter(Boolean);
-      for (const part of parts) {
+    // P2-5: comma split at top level only
+    if (trimmed.includes(',')) {
+      for (const part of splitTopLevel(trimmed, ',')) {
         results.push(...deepQueryAll(part, root));
       }
       return Array.from(new Set(results));
     }
 
-    // Handle descendant across boundaries
-    const spaceIdx = selector.indexOf(' ');
-    if (spaceIdx > 0) {
-      const head = selector.substring(0, spaceIdx).trim();
-      const tail = selector.substring(spaceIdx + 1).trim();
+    // Descendant across boundaries
+    const spaceParts = splitTopLevel(trimmed, ' ');
+    if (spaceParts.length >= 2) {
       try {
-        const native = root.querySelectorAll?.(selector);
-        if (native && native.length > 0) {
-          results.push(...Array.from(native));
-        }
+        const native = root.querySelectorAll?.(trimmed);
+        if (native && native.length > 0) results.push(...Array.from(native));
       } catch (e) {}
 
-      const headEls = deepQueryAll(head, root);
-      for (const h of headEls) {
-        results.push(...deepQueryAll(tail, h));
+      if (spaceParts.length === 2) {
+        const [head, tail] = spaceParts;
+        for (const h of deepQueryAll(head, root)) {
+          results.push(...deepQueryAll(tail, h));
+        }
       }
       return Array.from(new Set(results));
     }
 
     // Native querySelectorAll on root
     try {
-      if (root.querySelectorAll) {
-        results.push(...Array.from(root.querySelectorAll(selector)));
-      }
+      if (root.querySelectorAll) results.push(...Array.from(root.querySelectorAll(trimmed)));
     } catch (e) {}
 
     // Root's own shadowRoot
-    if (root.shadowRoot) {
-      results.push(...deepQueryAll(selector, root.shadowRoot));
-    }
+    if (root.shadowRoot) results.push(...deepQueryAll(trimmed, root.shadowRoot));
 
-    // Children's shadowRoots
+    // P3-3: Only custom elements' shadow roots
     const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
     for (const el of children) {
-      if (el.shadowRoot) {
-        results.push(...deepQueryAll(selector, el.shadowRoot));
+      if (el.shadowRoot && el.localName.includes('-')) {
+        results.push(...deepQueryAll(trimmed, el.shadowRoot));
       }
     }
 
     return Array.from(new Set(results));
   }
 
+  // P3-5: isElementVisible — use rect size + display/visibility only.
+  // Do NOT filter on opacity or pointer-events (misreports animated/disabled elements).
   function isElementVisible(el) {
     if (!el) return false;
     if (el.hasAttribute('hidden')) return false;
     if (el.hasAttribute('opened') && el.getAttribute('opened') === 'false') return false;
     try {
       const style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.pointerEvents === 'none') {
-        return false;
-      }
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
     } catch (e) {}
     const rect = el.getBoundingClientRect();
     return (rect.width > 0 && rect.height > 0);
@@ -214,27 +246,47 @@
   }
 
   // Expose helpers for automated testing & verification
-  window.__XMON_DEV__ = { deepQuery, deepQueryAll, isDialogOpen, isElementVisible };
+  window.__XMON_DEV__ = window.__XMON_DEV__ || {};
 
   function normalizeVideoTitle(str) {
     if (!str) return '';
     return String(str)
-      .toLowerCase()
       .replace(/\.[a-z0-9]{2,5}$/i, '')
-      .replace(/[\s\-_._~+=()\[\]{}!@#$%^&*\\/|:;"'<>,?]+/g, ' ')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .toLowerCase()
       .trim();
   }
 
-  function isTitleMatching(titleA, titleB) {
+  function toYouTubeCandidateTitle(fileName) {
+    if (!fileName) return '';
+    const noExt = String(fileName).replace(/\.[a-z0-9]{2,5}$/i, '');
+    const sanitized = noExt.replace(/[<>]/g, '').slice(0, 100);
+    return sanitized;
+  }
+
+  function isTitleMatching(titleA, titleB, allowSuffix = false) {
     if (!titleA || !titleB) return false;
     const a = normalizeVideoTitle(titleA);
     const b = normalizeVideoTitle(titleB);
     if (!a || !b) return false;
+    // 1. Exact equality of normalized titles
     if (a === b) return true;
-    if (a.includes(b) || b.includes(a)) return true;
-    const prefixA = a.substring(0, 15).trim();
-    const prefixB = b.substring(0, 15).trim();
-    if (prefixA.length >= 4 && (b.includes(prefixA) || a.includes(prefixB))) return true;
+
+    // 2. Exact equality after applying YouTube upload title sanitization (strip <> and truncate to 100 chars)
+    const ytA = normalizeVideoTitle(toYouTubeCandidateTitle(titleA));
+    const ytB = normalizeVideoTitle(toYouTubeCandidateTitle(titleB));
+    if (ytA === b || a === ytB || ytA === ytB) return true;
+
+    // 3. Delimited trailing copy/number suffix (only enabled in secondary pass)
+    if (allowSuffix) {
+      const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const trailingPatternA = new RegExp('^' + escapeRegex(b) + '\\s+(?:\\d+|copy)$');
+      const trailingPatternB = new RegExp('^' + escapeRegex(a) + '\\s+(?:\\d+|copy)$');
+      if (trailingPatternA.test(a) || trailingPatternB.test(b)) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -259,7 +311,8 @@
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  async function waitFor(predicate, timeoutMs = 10000, pollIntervalMs = 100) {
+  // P3-3: Default poll raised from 100ms to 250ms to reduce DOM scan frequency.
+  async function waitFor(predicate, timeoutMs = 10000, pollIntervalMs = 250) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
@@ -284,11 +337,15 @@
     // Queue
     queue: [],              // Array of { id, file, name, size, status, error, retryCount }
     processedIds: new Set(),// Track processed video IDs to prevent duplicates
+    publishedDraftKeys: new Set(), // Track positively published draft videoIds/titles (P1-9)
+    failedDraftKeys: new Set(),    // Track failed draft videoIds/titles (P1-9)
     
     // Process control
     isRunning: false,
     isPaused: false,
     stopRequested: false,
+    runToken: 0,
+    limitReached: false,
     
     // Batch management
     batchSize: 15,
@@ -300,6 +357,8 @@
     uploadedCount: 0,
     publishedCount: 0,
     failedCount: 0,
+    standalonePublished: 0,
+    standaloneFailed: 0,
     
     // Draft publisher config (preserved from v1)
     config: {
@@ -338,6 +397,7 @@
   // Video status enum
   const STATUS = {
     WAITING: 'waiting',
+    NEEDS_FILE: 'needs-file',
     UPLOADING: 'uploading',
     UPLOADED: 'uploaded',
     DRAFT: 'draft',
@@ -357,6 +417,57 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // ============================================================
+  // P5: RING-BUFFER DEBUG LOG
+  // Last 300 events. Exposed on window.__XMON_DEV__.getLog().
+  // ============================================================
+  const _xmonLogBuffer = [];
+  const _XMON_LOG_MAX = 300;
+
+  function xmonLog(level, ...args) {
+    const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+    const entry = { t: new Date().toISOString(), level, msg };
+    _xmonLogBuffer.push(entry);
+    if (_xmonLogBuffer.length > _XMON_LOG_MAX) _xmonLogBuffer.shift();
+    if (level === 'WARN' || level === 'ERROR') {
+      console[level === 'ERROR' ? 'error' : 'warn']('[XMON]', msg);
+    } else {
+      console.debug('[XMON]', msg);
+    }
+  }
+
+  function getDebugLog() {
+    return _xmonLogBuffer.map(e => `[${e.t}] [${e.level}] ${e.msg}`).join('\n');
+  }
+
+  // ============================================================
+  // P5: SELECTOR HEALTH CHECK
+  // ============================================================
+  function runSelectorHealthCheck() {
+    const checks = [
+      { name: 'Upload dialog', sel: 'ytcp-uploads-dialog' },
+      { name: 'Multi-upload dialog', sel: 'ytcp-multi-file-upload-dialog' },
+      { name: 'Video row', sel: 'ytcp-video-row' },
+      { name: 'Editor dialog', sel: 'ytcp-video-metadata-editor, ytcp-video-editor' },
+      { name: 'Done/Save button', sel: '#done-button, #save-button' },
+      { name: 'Title textarea', sel: '#title-textarea' },
+      { name: 'Visibility radio (PUBLIC)', sel: '[name="PUBLIC"]' },
+      { name: 'Stepper step', sel: 'ytcp-stepper-step' },
+      { name: 'MFK radio', sel: '[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]' },
+      { name: 'Sidebar Content', sel: '[test-id="menu-item-content"], a[href*="/videos"]' },
+      { name: 'Draft edit button', sel: '[aria-label*="Edit" i]' }
+    ];
+    const results = [];
+    for (const c of checks) {
+      const el = deepQuery(c.sel);
+      const found = !!el;
+      const visible = found ? isElementVisible(el) : false;
+      results.push({ name: c.name, found, visible });
+      xmonLog(found ? 'INFO' : 'WARN', `Health: ${c.name} — ${found ? (visible ? 'found+visible' : 'found(hidden)') : 'NOT FOUND'}`);
+    }
+    return results;
   }
 
   // ============================================================
@@ -445,9 +556,12 @@
   // ============================================================
   // YOUTUBE STUDIO ERROR DETECTION ENGINE
   // ============================================================
+  // P2-3: detectYouTubeUploadError — separates dedicated error element text from dialog-wide text.
+  // Broad patterns (upload failed, already uploaded) only run on DEDICATED error elements,
+  // NOT on dialog-wide text (which contains filenames that may match those words).
   function detectYouTubeUploadError() {
     try {
-      const errorSelectors = [
+      const dedicatedErrorSelectors = [
         '#error-short-message',
         '.error-short-message',
         '#error-message',
@@ -461,49 +575,41 @@
         'ytcp-video-row .error-badge'
       ];
 
-      const detectedTexts = [];
-
-      for (const sel of errorSelectors) {
-        const els = deepQueryAll(sel);
-        for (const el of els) {
+      // Text from DEDICATED error elements only — safe for broad pattern matching
+      const dedicatedTexts = [];
+      for (const sel of dedicatedErrorSelectors) {
+        for (const el of deepQueryAll(sel)) {
           if (el && isElementVisible(el)) {
             const txt = (el.textContent || '').trim();
-            if (txt) detectedTexts.push(txt);
+            if (txt) dedicatedTexts.push(txt);
           }
         }
       }
 
-      // Scan active upload dialog text directly
+      // Check paper/ytcp toasts (dedicated elements)
+      for (const t of deepQueryAll('ytcp-toast, paper-toast')) {
+        if (t && isElementVisible(t)) dedicatedTexts.push(t.textContent || '');
+      }
+
+      const dedicatedText = dedicatedTexts.join(' ').toLowerCase();
+
+      // Dialog-wide text — ONLY for quota/batch limit detection (regex-gated, not plain string)
+      let dialogWideText = '';
       const uploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
       if (uploadDialog && isElementVisible(uploadDialog)) {
-        const dialogText = uploadDialog.textContent || '';
-        if (
-          /daily\s*upload\s*limit/i.test(dialogText) ||
-          /upload\s*more\s*videos\s*in\s*24\s*hours/i.test(dialogText) ||
-          /more\s*than\s*15\s*videos/i.test(dialogText) ||
-          /cannot\s*upload\s*more\s*than/i.test(dialogText)
-        ) {
-          detectedTexts.push(dialogText);
-        }
+        dialogWideText = (uploadDialog.textContent || '').toLowerCase();
       }
 
-      // Check paper/ytcp toasts
-      const toasts = deepQueryAll('ytcp-toast, paper-toast');
-      for (const t of toasts) {
-        if (t && isElementVisible(t)) {
-          detectedTexts.push(t.textContent || '');
-        }
-      }
+      // Combined text is used ONLY for patterns that are not filename-matchable
+      // (daily limit / batch limit messages are very specific, low false-positive risk)
+      const fullText = dedicatedText + ' ' + dialogWideText;
 
-      const fullText = detectedTexts.join(' ').toLowerCase();
-
-      // PATTERN 1: Daily Upload Limit Reached
+      // PATTERN 1: Daily Upload Limit (safe to check dialog-wide, uses regex)
       if (
-        fullText.includes('daily upload limit reached') ||
-        fullText.includes('upload more videos in 24 hours') ||
-        fullText.includes('daily limit reached') ||
-        fullText.includes('upload limit reached') ||
-        fullText.includes('reached your daily upload limit')
+        /daily\s*upload\s*limit\s*reached/.test(fullText) ||
+        /upload\s*more\s*videos\s*in\s*24\s*hours/.test(fullText) ||
+        /reached\s*your\s*daily\s*upload\s*limit/.test(fullText) ||
+        /daily\s*limit\s*reached/.test(dedicatedText)
       ) {
         return {
           type: 'daily_limit',
@@ -513,12 +619,10 @@
         };
       }
 
-      // PATTERN 2: Max Batch Limit Exceeded (More than 15 videos)
+      // PATTERN 2: Batch Limit Exceeded (safe: very specific numeric phrase)
       if (
-        fullText.includes('cannot upload more than 15') ||
-        fullText.includes('more than 15 videos at a time') ||
-        fullText.includes('more than 15 videos') ||
-        fullText.includes('cannot upload more than')
+        /cannot\s*upload\s*more\s*than\s*15/.test(fullText) ||
+        /more\s*than\s*15\s*videos\s*at\s*a\s*time/.test(fullText)
       ) {
         return {
           type: 'batch_limit_exceeded',
@@ -528,12 +632,12 @@
         };
       }
 
-      // PATTERN 2: Video format unsupported
+      // PATTERN 3: Video format unsupported (dedicated elements only)
       if (
-        fullText.includes('processing abandoned') ||
-        fullText.includes('format not supported') ||
-        fullText.includes('invalid file format') ||
-        fullText.includes('video could not be processed')
+        dedicatedText.includes('processing abandoned') ||
+        dedicatedText.includes('format not supported') ||
+        dedicatedText.includes('invalid file format') ||
+        dedicatedText.includes('video could not be processed')
       ) {
         return {
           type: 'format_error',
@@ -543,8 +647,8 @@
         };
       }
 
-      // PATTERN 3: Duplicate video
-      if (fullText.includes('duplicate video') || fullText.includes('already uploaded')) {
+      // PATTERN 4: Duplicate (dedicated elements only — avoid filename false positives)
+      if (dedicatedText.includes('duplicate video')) {
         return {
           type: 'duplicate',
           title: 'Duplicate Video Detected',
@@ -553,8 +657,8 @@
         };
       }
 
-      // PATTERN 4: Generic upload error
-      if (fullText.includes('upload failed') || fullText.includes('server error')) {
+      // PATTERN 5: Generic upload error (dedicated elements only)
+      if (/\bupload\s+failed\b/.test(dedicatedText) || /\bserver\s+error\b/.test(dedicatedText)) {
         return {
           type: 'error',
           title: 'Upload Error',
@@ -579,7 +683,9 @@
       size: v.size,
       status: v.status,
       error: v.error || null,
-      retryCount: v.retryCount || 0
+      retryCount: v.retryCount || 0,
+      draftId: v.draftId || null,
+      draftTitle: v.draftTitle || null
     }));
     
     const persistData = {
@@ -591,7 +697,9 @@
       failedCount: state.failedCount,
       currentBatch: state.currentBatch,
       totalBatches: state.totalBatches,
-      batchSize: state.batchSize
+      batchSize: state.batchSize,
+      activeAlert: state.activeAlert,
+      statusMessage: state.statusMessage
     };
     
     try {
@@ -623,11 +731,38 @@
           if (result.xmonQueueState) {
             const data = result.xmonQueueState;
             if (data.config) state.config = { ...state.config, ...data.config };
+            if (data.activeAlert) {
+              if (data.activeAlert.type === 'daily_limit' && data.activeAlert.at && (Date.now() - data.activeAlert.at >= 24 * 60 * 60 * 1000)) {
+                console.log('[XMON] Stored daily limit alert has expired (24h cooldown passed). Discarding.');
+                state.activeAlert = null;
+                state.limitReached = false;
+                saveQueueState();
+              } else {
+                state.activeAlert = data.activeAlert;
+              }
+            }
+            if (data.statusMessage) state.statusMessage = data.statusMessage;
+            if (data.batchSize) state.batchSize = data.batchSize;
             state.uploadedCount = data.uploadedCount || 0;
             state.publishedCount = data.publishedCount || 0;
             state.failedCount = data.failedCount || 0;
             state.currentBatch = data.currentBatch || 0;
             state.totalBatches = data.totalBatches || 0;
+
+            if (Array.isArray(data.queueMeta) && data.queueMeta.length > 0 && state.queue.length === 0) {
+              state.queue = data.queueMeta.map(item => ({
+                id: item.id || generateId(),
+                file: null, // Needs user re-drop to re-attach file object
+                name: item.name,
+                size: item.size,
+                status: (item.status === STATUS.PUBLISHED || item.status === STATUS.UPLOADED) ? item.status : STATUS.NEEDS_FILE,
+                error: (item.status === STATUS.PUBLISHED) ? null : (item.error || 'Re-add file to resume'),
+                retryCount: item.retryCount || 0,
+                draftId: item.draftId || null,
+                draftTitle: item.draftTitle || null
+              }));
+              state.totalCount = state.queue.length;
+            }
           }
           renderUI();
         });
@@ -645,56 +780,43 @@
     const drafts = [];
 
     for (const row of rows) {
-      if (row.getAttribute('data-xmon-status') === 'published') continue;
+      const rowStatus = row.getAttribute('data-xmon-status');
+      if (rowStatus === 'published' || rowStatus === 'failed') continue;
 
-      // Trigger hover to reveal action buttons (YouTube virtualizes these)
-      try {
-        row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      } catch (e) {}
-
-      // Extended edit-draft button selectors for YouTube Studio UI updates
-      let editBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
-        || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"], [aria-label*="draft" i], [title*="draft" i], [aria-label*="Edit" i]', row);
-
-      if (!editBtn) {
-        // Search for any clickable element that looks like an edit button
-        const buttons = deepQueryAll('ytcp-button, ytcp-icon-button, button, a, [role="button"]', row);
-        editBtn = buttons.find(b => {
-          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
-          return text.includes('draft') || text.includes('edit draft') || text.includes('edit video') || text.includes('খসড়া');
-        });
-      }
-
-      // Fallback: look for three-dot/kebab menu or any icon button in the row's action area
-      if (!editBtn) {
-        const actionArea = row.querySelector('.action-buttons, .actions, [class*="action"]') || row;
-        const iconBtns = deepQueryAll('ytcp-icon-button, [icon="icons:more-vert"], [icon="icons:create"]', actionArea);
-        if (iconBtns.length > 0) {
-          // Prefer an edit-like icon button, or fallback to the first action button
-          editBtn = iconBtns.find(b => {
-            const label = (b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
-            return label.includes('edit') || label.includes('draft');
-          }) || iconBtns[0];
-        }
-      }
-
+      // Visibility cell check
       const visCell = row.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
-        || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', row)
-        || row;
-      const visText = (visCell.textContent || '').toLowerCase();
-      const isDraftText = visText.includes('draft') || visText.includes('খসড়া') || (editBtn !== null);
+        || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', row);
+      const visText = visCell ? (visCell.textContent || '').toLowerCase() : '';
+      const isDraftByVis = visText.includes('draft') || visText.includes('খসড়া');
 
-      if (editBtn || isDraftText) {
-        const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
-          || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
-        const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
-        const videoId = row.getAttribute('video-id') ||
-          row.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
-          deepQuery('a[href*="/video/"]', row)?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
-          '';
-        drafts.push({ row, editBtn, title, videoId });
+      // Edit draft button check
+      let editDraftBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
+        || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', row);
+
+      if (!editDraftBtn) {
+        const buttons = deepQueryAll('ytcp-button, ytcp-icon-button, button, a, [role="button"]', row);
+        editDraftBtn = buttons.find(b => {
+          const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
+          return /edit\s*draft/i.test(text) || (text.includes('draft') && text.includes('edit')) || (text.includes('খসড়া') && text.includes('সম্পাদনা'));
+        }) || null;
       }
+
+      // Strictly draft only: must match visibility text or explicit edit draft button
+      const isDraft = isDraftByVis || (editDraftBtn !== null);
+      if (!isDraft) continue;
+
+      const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
+        || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
+      const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
+      const videoId = row.getAttribute('video-id') ||
+        row.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
+        deepQuery('a[href*="/video/"]', row)?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
+        '';
+
+      const draftKey = videoId || title;
+      if (state.publishedDraftKeys?.has(draftKey) || state.failedDraftKeys?.has(draftKey)) continue;
+
+      drafts.push({ row, editBtn: editDraftBtn, title, videoId });
     }
 
     return drafts;
@@ -765,23 +887,34 @@
     if (!buttonToClick) throw new Error('Edit draft button not found');
     clickElement(buttonToClick);
 
-    // Step 2: Wait for editor dialog — expanded selectors for YouTube Studio UI updates
+    // Step 2: Wait for editor dialog — P2-7: require editor evidence (title field / done-button / stepper)
     const dialog = await waitFor(() => {
-      // Check multiple possible dialog element types
       const selectors = [
-        'ytcp-uploads-dialog',
         'ytcp-video-metadata-editor',
         'ytcp-video-metadata-editor-advanced',
         'ytcp-video-editor',
+        'ytcp-uploads-dialog',
         'ytcp-dialog[id*="dialog"]'
       ];
       for (const sel of selectors) {
         const d = deepQuery(sel);
-        if (d && isDialogOpen(d)) return d;
+        if (!d || !isDialogOpen(d)) continue;
+        // Require evidence of the editor (not a leftover upload/share dialog)
+        const hasEditor = !!(deepQuery('#title-textarea, #done-button, #save-button, ytcp-stepper-step', d)
+          || deepQuery('#title-textarea, #done-button, #save-button, ytcp-stepper-step', d.shadowRoot));
+        if (hasEditor) return d;
+        // For ytcp-uploads-dialog specifically, also accept it if it has a done-button (multi-step editor)
+        if (sel === 'ytcp-uploads-dialog') {
+          const doneInUploads = deepQuery('#done-button, #save-button', d);
+          if (doneInUploads) return d;
+        }
       }
-      // Also check by visibility: any large dialog-like element that just appeared
+      // Generic ytcp-dialog: only accept if it has explicit editor evidence
       const genericDialog = deepQuery('ytcp-dialog');
-      if (genericDialog && isDialogOpen(genericDialog)) return genericDialog;
+      if (genericDialog && isDialogOpen(genericDialog)) {
+        const hasEditorEvidence = !!(deepQuery('#done-button, #title-textarea, ytcp-stepper-step', genericDialog));
+        if (hasEditorEvidence) return genericDialog;
+      }
       return null;
     }, 15000);
 
@@ -876,11 +1009,20 @@
     clickElement(doneBtn);
     await sleep(800);
 
-    // Step 7: Wait for editor dialog and share dialog to fully close
+    // Step 7: Wait for editor dialog and share dialog to fully close (up to 20s, no premature Escape)
     const dialogCloseStart = Date.now();
-    while (Date.now() - dialogCloseStart < 12000) {
+    while (Date.now() - dialogCloseStart < 20000) {
+      if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
+
+      // Check for YouTube Studio confirmation prompts (e.g. "Checks still running", "Publish anyway")
+      const promptConfirm = deepQuery('ytcp-confirmation-dialog #confirm-button, ytcp-alert-dialog #confirm-button, #dialog-action-buttons [aria-label*="Publish" i]');
+      if (promptConfirm && isElementVisible(promptConfirm) && isButtonEnabled(promptConfirm)) {
+        clickElement(promptConfirm);
+        await sleep(500);
+      }
+
       // Close share dialog if it appears
-      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button, ytcp-video-share-dialog ytcp-button, [aria-label="Close" i]');
+      const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button, ytcp-video-share-dialog ytcp-button');
       if (shareClose && isElementVisible(shareClose)) {
         clickElement(shareClose);
         await sleep(400);
@@ -892,24 +1034,46 @@
         break;
       }
 
-      // After 3 seconds, also try Escape key as fallback
-      if (Date.now() - dialogCloseStart > 3000) {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
-        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', bubbles: true }));
-      }
       await sleep(500);
     }
 
     // Safety cleanup of any leftover share dialog or backdrop
-    const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], [aria-label="Close" i]');
+    const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
     if (lingeringShare && isElementVisible(lingeringShare)) {
       clickElement(lingeringShare);
       await sleep(300);
     }
 
-    row.setAttribute('data-xmon-status', 'published');
-    row.style.outline = '2px solid #2ecc71';
-    state.publishedCount++;
+    // Post-publish verification: confirm row is no longer in draft state on YouTube Studio
+    const draftKey = draftItem.videoId || draftItem.title;
+    if (draftItem.videoId) {
+      await sleep(600);
+      const freshRows = deepQueryAll('ytcp-video-row');
+      const targetRow = freshRows.find(r => {
+        const vid = r.getAttribute('video-id') || r.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1];
+        return vid === draftItem.videoId;
+      });
+
+      if (targetRow) {
+        const visCell = targetRow.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
+          || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', targetRow);
+        const visText = (visCell ? visCell.textContent || '' : '').toLowerCase();
+        const hasDraftEditBtn = !!(targetRow.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
+          || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', targetRow));
+
+        if ((visText.includes('draft') || visText.includes('খসড়া')) && hasDraftEditBtn) {
+          throw new Error('Publish verification failed: draft state still present after dialog close');
+        }
+        targetRow.setAttribute('data-xmon-status', 'published');
+        targetRow.style.outline = '2px solid #2ecc71';
+      }
+    } else {
+      row.setAttribute('data-xmon-status', 'published');
+      row.style.outline = '2px solid #2ecc71';
+    }
+
+    if (!state.publishedDraftKeys) state.publishedDraftKeys = new Set();
+    state.publishedDraftKeys.add(draftKey);
   }
 
   // ============================================================
@@ -962,7 +1126,7 @@
       const dialog = await waitFor(() => {
         const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
         return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
-      }, 5000).catch(() => null);
+      }, 5000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
       if (dialog) return true;
     }
 
@@ -992,7 +1156,7 @@
           if (t.includes('upload') && isElementVisible(it)) return it;
         }
         return null;
-      }, 5000).catch(() => null);
+      }, 5000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
 
       if (uploadItem) {
         console.log('[XMON] Clicking "Upload videos" dropdown item...');
@@ -1000,7 +1164,7 @@
         const dialog = await waitFor(() => {
           const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
           return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
-        }, 6000).catch(() => null);
+        }, 6000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
         if (dialog) return true;
       }
     }
@@ -1009,7 +1173,7 @@
     const dialog = await waitFor(() => {
       const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
       return (d && (isDialogOpen(d) || isElementVisible(d))) ? d : null;
-    }, 4000).catch(() => null);
+    }, 4000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
 
     return !!dialog;
   }
@@ -1310,7 +1474,7 @@
     await waitFor(() => {
       const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
       return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
-    }, 3000).catch(() => {});
+    }, 3000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
   }
 
   // ============================================================
@@ -1319,13 +1483,16 @@
   async function waitForBatchUploadComplete(batchCount, currentBatchVideos = []) {
     updateStatus(`Uploading ${batchCount} video(s) to YouTube...`, 'active');
     
-    // Max wait: 90 seconds (batch of 15 Shorts normally finishes in 15-40s)
-    const maxWaitMs = Math.min(Math.max(batchCount * 8000, 45000), 90000);
-    const start = Date.now();
+    // Configurable timeout: at least 120s, 20s per video
+    const timeoutMs = Math.max(batchCount * 20000, 120000);
+    let deadline = Date.now() + timeoutMs;
     let consecutiveDoneCount = 0;
     const trackedVideoIds = new Set();
+    let highestProgressSum = 0;
+    // P2-2: track which non-critical notification types have been shown this batch to avoid spam
+    const shownNotificationTypes = new Set();
 
-    while (Date.now() - start < maxWaitMs) {
+    while (Date.now() < deadline) {
       if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
       if (state.isPaused) {
         await waitForResume();
@@ -1337,6 +1504,7 @@
         console.warn('[XMON] Upload error detected:', detectedError);
         if (detectedError.type === 'daily_limit') {
           state.activeAlert = detectedError;
+          state.limitReached = true;
           updateStatus('Daily upload limit reached. You can upload more videos in 24 hours.', 'error');
           showAnimatedNotification({
             type: 'daily_limit',
@@ -1356,74 +1524,97 @@
           await sleep(1500);
           throw new Error('BATCH_LIMIT_EXCEEDED');
         } else {
-          showAnimatedNotification({
-            type: detectedError.type,
-            title: detectedError.title,
-            message: detectedError.message,
-            duration: 6000
-          });
+          // P2-2: show each non-critical notification type at most once per batch
+          if (!shownNotificationTypes.has(detectedError.type)) {
+            shownNotificationTypes.add(detectedError.type);
+            showAnimatedNotification({
+              type: detectedError.type,
+              title: detectedError.title,
+              message: detectedError.message,
+              duration: 6000
+            });
+          }
         }
       }
 
-      // 2. Direct Content Draft Check: if drafts for this batch are already saved in YouTube Studio
+      // 2. Direct Content Draft Check: requires ALL expected videos matched to distinct drafts
       const contentDrafts = findDraftRows();
       if (contentDrafts.length > 0) {
-        let matchedCount = 0;
+        const claimedDraftKeys = new Set(
+          currentBatchVideos
+            .filter(v => v.status === STATUS.UPLOADED && v.draftId)
+            .map(v => v.draftId)
+        );
+
         for (const video of currentBatchVideos) {
-          const match = contentDrafts.find(d => isTitleMatching(video.name, d.title));
+          if (video.status === STATUS.UPLOADED && video.draftId) continue;
+          const match = contentDrafts.find(d => {
+            const key = d.videoId || d.title;
+            if (claimedDraftKeys.has(key)) return false;
+            return isTitleMatching(video.name, d.title);
+          });
           if (match) {
-            matchedCount++;
+            const key = match.videoId || match.title;
+            claimedDraftKeys.add(key);
             if (video.status === STATUS.UPLOADING) {
               video.status = STATUS.UPLOADED;
-              video.draftId = match.videoId || match.title;
+              video.draftId = key;
               video.draftTitle = match.title;
-              state.uploadedCount++;
               state.processedIds.add(video.id);
               trackedVideoIds.add(video.id);
             }
           }
         }
-        if (matchedCount >= Math.min(batchCount, contentDrafts.length) && matchedCount > 0) {
-          console.log(`[XMON] Confirmed ${matchedCount} batch drafts already in YouTube Studio. Exiting wait loop.`);
-          for (const video of currentBatchVideos) {
-            if (video.status === STATUS.UPLOADING) {
-              video.status = STATUS.UPLOADED;
-              state.uploadedCount++;
-              state.processedIds.add(video.id);
-            }
-          }
+
+        const allMatched = currentBatchVideos.every(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED);
+        if (allMatched) {
+          console.log(`[XMON] All ${currentBatchVideos.length} batch videos confirmed as distinct drafts in YouTube Studio. Exiting wait loop.`);
           renderUI();
           return true;
         }
       }
 
-      // 3. Multi-file items tracking in active upload dialog
-      const fileItems = deepQueryAll('ytcp-uploads-file-item, .upload-item, ytcp-upload-item, [class*="upload-item"]');
+      // 3. Multi-file items tracking in active upload dialog (de-duplicate nested matches)
+      let fileItems = deepQueryAll('ytcp-uploads-file-item');
+      if (fileItems.length === 0) {
+        fileItems = deepQueryAll('.upload-item, ytcp-upload-item');
+      }
+      // De-duplicate if parent and child both match
+      fileItems = fileItems.filter(el => !fileItems.some(other => other !== el && other.contains(el)));
+
       let completedInDom = 0;
       let failedInDom = 0;
 
       if (fileItems.length > 0) {
         fileItems.forEach((item) => {
+          const extractedName = extractItemFileName(item);
           const itemText = (item.textContent || '').toLowerCase();
-          const isDone = itemText.includes('complete') ||
-                         itemText.includes('saved as draft') ||
-                         itemText.includes('draft') ||
-                         itemText.includes('processing') ||
+          const isDone = itemText.includes('saved as draft') ||
+                         itemText.includes('upload complete') ||
+                         itemText.includes('uploads complete') ||
                          itemText.includes('checks complete') ||
                          itemText.includes('100%');
           const isFailed = itemText.includes('abandoned') ||
                             itemText.includes('upload failed') ||
-                            itemText.includes('error');
+                            itemText.includes('upload rejected');
 
           if (isDone || isFailed) completedInDom++;
           if (isFailed) failedInDom++;
 
           for (const video of currentBatchVideos) {
             if (trackedVideoIds.has(video.id)) continue;
-            if (isTitleMatching(video.name, itemText)) {
+            // P1-2: Match against extracted title or word boundary in item text for progress tracking
+            let matches = isTitleMatching(video.name, extractedName, false);
+            if (!matches && (extractedName || itemText)) {
+              const normVideo = normalizeVideoTitle(video.name);
+              const normExtracted = normalizeVideoTitle(extractedName || itemText);
+              const wordBoundary = new RegExp('(?:^|\\s)' + normVideo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s|$)', 'i');
+              matches = wordBoundary.test(normExtracted);
+            }
+
+            if (matches) {
               if (isDone && video.status === STATUS.UPLOADING) {
                 video.status = STATUS.UPLOADED;
-                state.uploadedCount++;
                 state.processedIds.add(video.id);
                 trackedVideoIds.add(video.id);
                 renderUI();
@@ -1443,50 +1634,39 @@
       // 4. Check if upload dialog closed / disappeared after grace period
       const activeUploadDialog = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
       const dialogDisappeared = !activeUploadDialog || (!isDialogOpen(activeUploadDialog) && !isElementVisible(activeUploadDialog));
-      if (dialogDisappeared && Date.now() - start > 8000) {
-        console.log('[XMON] Upload dialog closed. YouTube has transitioned batch to drafts.');
-        for (const video of currentBatchVideos) {
-          if (video.status === STATUS.UPLOADING) {
-            video.status = STATUS.UPLOADED;
-            state.uploadedCount++;
-            state.processedIds.add(video.id);
-          }
-        }
+      if (dialogDisappeared && Date.now() - (deadline - timeoutMs) > 8000) {
+        console.log('[XMON] Upload dialog closed. Advancing to Content page draft verification.');
         renderUI();
         return true;
       }
 
-      // 5. Check if YouTube Close button is enabled & dialog text indicates draft saved
-      const closeBtn = isUploadCloseBtnEnabled();
-      const dialogText = activeUploadDialog ? (activeUploadDialog.textContent || '').toLowerCase() : '';
-      const isDraftSavedInText = dialogText.includes('saved as draft') ||
-                                 dialogText.includes('uploads complete') ||
-                                 dialogText.includes('all uploads complete') ||
-                                 dialogText.includes('upload complete') ||
-                                 dialogText.includes('checks complete');
-
-      // Check if any active upload progress bar exists
+      // 5. Track active upload progress bars and extend deadline if advancing (P1-1)
       const activeProgressBars = deepQueryAll('tp-yt-paper-progress, ytcp-video-upload-progress, paper-progress').filter(p => {
         if (!isElementVisible(p)) return false;
         const val = parseInt(p.getAttribute('aria-valuenow') || p.value || '0', 10);
         return val > 0 && val < 100;
       });
 
-      const isAllUploadsFinished = (closeBtn !== null && activeProgressBars.length === 0) ||
-                                   (isDraftSavedInText && activeProgressBars.length === 0) ||
-                                   (completedInDom >= batchCount);
+      let currentProgressSum = 0;
+      for (const bar of activeProgressBars) {
+        currentProgressSum += parseInt(bar.getAttribute('aria-valuenow') || bar.value || '0', 10);
+      }
+      const currentItemsSig = fileItems.map(i => (i.textContent || '').slice(0, 40)).join('|');
+      if (fileItems.length > lastItemCount || currentItemsSig !== lastItemsSignature || currentProgressSum > highestProgressSum) {
+        lastItemCount = fileItems.length;
+        lastItemsSignature = currentItemsSig;
+        if (currentProgressSum > highestProgressSum) highestProgressSum = currentProgressSum;
+        // Extend deadline while active progress, item count, or text changes occur
+        deadline = Math.max(deadline, Date.now() + 30000);
+      }
 
-      if (isAllUploadsFinished) {
+      // 6. Check per-item completion in active dialog (P1-1: STRICT, never use dialog-wide text or close button alone)
+      const isAllItemsCompletedInDom = (fileItems.length >= batchCount) && (completedInDom >= batchCount);
+
+      if (isAllItemsCompletedInDom) {
         consecutiveDoneCount++;
         if (consecutiveDoneCount >= 2) {
-          console.log(`[XMON] Batch upload confirmed complete. CloseBtn=${!!closeBtn}, isDraftSaved=${isDraftSavedInText}, completedInDom=${completedInDom}`);
-          for (const video of currentBatchVideos) {
-            if (video.status === STATUS.UPLOADING) {
-              video.status = STATUS.UPLOADED;
-              state.uploadedCount++;
-              state.processedIds.add(video.id);
-            }
-          }
+          console.log(`[XMON] Batch upload confirmed complete on dialog: all ${completedInDom}/${batchCount} items finished.`);
           updateStatus('Batch upload confirmed. Ready to close dialog...', 'active');
           renderUI();
           return true;
@@ -1498,14 +1678,7 @@
       await sleep(1500);
     }
 
-    console.warn('[XMON] Batch upload wait grace period reached. Transitioning videos to uploaded for verification...');
-    for (const video of currentBatchVideos) {
-      if (video.status === STATUS.UPLOADING) {
-        video.status = STATUS.UPLOADED;
-        state.uploadedCount++;
-        state.processedIds.add(video.id);
-      }
-    }
+    console.warn('[XMON] Batch upload wait deadline reached. Advancing to draft verification without blindly marking uploaded...');
     renderUI();
     return true;
   }
@@ -1524,6 +1697,8 @@
     console.log(`[XMON] Ensuring navigation to Content page (${targetTab})...`);
 
     // 1. Ensure on /videos
+    // P2-4: Removed history.pushState fallback (was pushing /videos/upload which reopened upload dialog).
+    // Prefer sidebar click only; if not found, report a clear error and stop.
     if (!currentUrl.includes('/videos') && !currentUrl.includes('/content')) {
       const sidebarItems = deepQueryAll('a[href*="/videos"], [test-id="menu-item-content"], #menu-item-content, tp-yt-paper-icon-item[test-id="menu-item-content"]');
       let clicked = false;
@@ -1536,13 +1711,9 @@
         }
       }
 
-      if (!clicked || (!window.location.href.includes('/videos') && !window.location.href.includes('/content'))) {
-        const channelMatch = window.location.href.match(/\/channel\/([^/?#]+)/);
-        if (channelMatch) {
-          window.history.pushState({}, '', `/channel/${channelMatch[1]}/videos/upload`);
-          window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-          await sleep(2500);
-        }
+      if (!clicked) {
+        console.warn('[XMON] navigateToContentSafe: Could not find sidebar Content item. Cannot navigate. Please navigate to Content page manually.');
+        xmonLog('WARN', 'navigateToContentSafe: sidebar Content item not found — manual navigation required.');
       }
     }
 
@@ -1612,35 +1783,30 @@
         }
       }
 
-      // Pass 1: Title matching
+      // Pass 1: Strict title matching with unique draft claiming
+      const claimedDraftKeys = new Set(
+        currentBatchVideos
+          .filter(v => (v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED) && v.draftId)
+          .map(v => v.draftId)
+      );
+
       for (const video of currentBatchVideos) {
         if (video.status === STATUS.UPLOADED && video.draftId) continue;
         if (video.status === STATUS.PUBLISHED) continue;
 
-        const matchingDraft = drafts.find(d => isTitleMatching(video.name, d.title));
+        const matchingDraft = drafts.find(d => {
+          const key = d.videoId || d.title;
+          if (claimedDraftKeys.has(key)) return false;
+          return isTitleMatching(video.name, d.title);
+        });
+
         if (matchingDraft) {
+          const draftKey = matchingDraft.videoId || matchingDraft.title;
+          claimedDraftKeys.add(draftKey);
           console.log(`[XMON] Confirmed draft in YouTube Studio: "${matchingDraft.title}" matches "${video.name}"`);
           video.status = STATUS.UPLOADED;
-          video.draftId = matchingDraft.videoId || matchingDraft.title;
+          video.draftId = draftKey;
           video.draftTitle = matchingDraft.title;
-          state.processedIds.add(video.id);
-          renderUI();
-        }
-      }
-
-      // Pass 2: Positional assignment for drafts in same batch
-      // Since 15 videos were uploaded together, any unassigned draft rows on top correspond to the remaining videos
-      const unassignedVideos = currentBatchVideos.filter(v => v.status !== STATUS.UPLOADED && v.status !== STATUS.PUBLISHED);
-      if (unassignedVideos.length > 0 && drafts.length > 0) {
-        const assignedDraftIds = new Set(currentBatchVideos.map(v => v.draftId).filter(Boolean));
-        const availableDrafts = drafts.filter(d => !assignedDraftIds.has(d.videoId || d.title));
-
-        for (let i = 0; i < Math.min(unassignedVideos.length, availableDrafts.length); i++) {
-          const video = unassignedVideos[i];
-          const d = availableDrafts[i];
-          video.status = STATUS.UPLOADED;
-          video.draftId = d.videoId || d.title;
-          video.draftTitle = d.title;
           state.processedIds.add(video.id);
           renderUI();
         }
@@ -1656,11 +1822,13 @@
       await sleep(2000);
     }
 
-    // Safety fallback: any video still marked UPLOADING is set to UPLOADED so publishBatchDrafts will attempt publishing
+    // Strict rule: Any video without verified matching draft becomes FAILED (never UPLOADED)
     for (const video of currentBatchVideos) {
-      if (video.status === STATUS.UPLOADING) {
-        video.status = STATUS.UPLOADED;
-        state.processedIds.add(video.id);
+      if (video.status !== STATUS.UPLOADED && video.status !== STATUS.PUBLISHED) {
+        console.warn(`[XMON] Draft not found for "${video.name}". Marking FAILED.`);
+        video.status = STATUS.FAILED;
+        video.error = 'Draft not found on YouTube Studio after upload';
+        state.failedCount++;
       }
     }
 
@@ -1700,18 +1868,37 @@
       if (!draftItem) {
         draftItem = drafts.find(d => isTitleMatching(video.name, d.title));
       }
-      if (!draftItem && drafts.length > 0) {
-        draftItem = drafts[0];
-      }
 
       if (!draftItem) {
-        // Try scrolling to load drafts from virtualized table
-        window.scrollBy(0, 600);
+        // P3-4: Scroll the nearest scrollable ancestor of the draft rows,
+        // not window (Studio renders its list in an inner container).
+        const anyRow = deepQuery('ytcp-video-row');
+        if (anyRow) {
+          let scrollable = anyRow.parentElement;
+          while (scrollable && scrollable !== document.body) {
+            const style = window.getComputedStyle(scrollable);
+            if (/auto|scroll/.test(style.overflowY) && scrollable.scrollHeight > scrollable.clientHeight) break;
+            scrollable = scrollable.parentElement;
+          }
+          if (scrollable && scrollable !== document.body) {
+            scrollable.scrollBy(0, 600);
+          } else {
+            window.scrollBy(0, 600);
+          }
+        } else {
+          window.scrollBy(0, 600);
+        }
         await sleep(1200);
         drafts = findDraftRows();
-        draftItem = drafts[0] || null;
+        if (video.draftId) {
+          draftItem = drafts.find(d => (d.videoId && d.videoId === video.draftId) || d.title === video.draftTitle);
+        }
+        if (!draftItem) {
+          draftItem = drafts.find(d => isTitleMatching(video.name, d.title));
+        }
       }
 
+      // Strictly never fallback to unrelated drafts[0]
       if (!draftItem) {
         console.warn(`[XMON] Draft row for "${video.name}" not found at publish step.`);
         video.status = STATUS.FAILED;
@@ -1721,20 +1908,37 @@
         continue;
       }
 
-      try {
-        video.status = STATUS.PUBLISHING;
-        renderUI();
+      const maxRetries = Math.max(1, state.config.maxRetries || 2);
+      let pubSuccess = false;
+      let lastErr = null;
 
-        await publishSingleDraft(draftItem, i + 1, readyVideos.length);
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (state.stopRequested) break;
+        try {
+          video.status = STATUS.PUBLISHING;
+          renderUI();
 
+          await publishSingleDraft(draftItem, i + 1, readyVideos.length);
+          pubSuccess = true;
+          break;
+        } catch (pubErr) {
+          lastErr = pubErr;
+          if (pubErr.message === 'CANCELLED_BY_USER') throw pubErr;
+          console.warn(`[XMON] Publish attempt ${attempt}/${maxRetries} failed for "${video.name}":`, pubErr);
+          await closeStuckDialogs(true);
+          if (attempt < maxRetries) await sleep(1500);
+        }
+      }
+
+      if (pubSuccess) {
         video.status = STATUS.PUBLISHED;
         showToast(`Published: ${video.name}`, 'success', 2500);
         renderUI();
         saveQueueState();
-      } catch (pubErr) {
-        console.error(`[XMON] Failed to publish draft for "${video.name}":`, pubErr);
+      } else {
+        console.error(`[XMON] Failed to publish draft for "${video.name}" after ${maxRetries} attempts:`, lastErr);
         video.status = STATUS.FAILED;
-        video.error = `Publish error: ${pubErr.message}`;
+        video.error = `Publish error: ${lastErr?.message || 'Unknown error'}`;
         state.failedCount++;
         renderUI();
         await closeStuckDialogs(true);
@@ -1753,12 +1957,21 @@
     if (state.isRunning) return;
     
     state.isRunning = true;
+    state.runToken = (state.runToken || 0) + 1;
+    const currentRunToken = state.runToken;
+    state.limitReached = false;
     state.stopRequested = false;
     state.isPaused = false;
     
     const initialWaiting = state.queue.filter(v => v.status === STATUS.WAITING || v.status === STATUS.FAILED);
     if (initialWaiting.length === 0) {
-      showToast('No videos to process in queue.', 'warning');
+      // P2-6: Show a more helpful message if all items are needs-file
+      const needsFileCount = state.queue.filter(v => v.status === STATUS.NEEDS_FILE).length;
+      if (needsFileCount > 0) {
+        showToast(`Re-add ${needsFileCount} file(s) to resume. Drop the original video files onto the queue.`, 'warning', 6000);
+      } else {
+        showToast('No videos to process in queue.', 'warning');
+      }
       state.isRunning = false;
       renderUI();
       return;
@@ -1774,6 +1987,7 @@
 
     state.totalCount = state.queue.length;
     const activeWaiting = state.queue.filter(v => v.status === STATUS.WAITING);
+    state.batchSize = Math.min(state.batchSize || 15, 15);
     state.totalBatches = Math.ceil(activeWaiting.length / state.batchSize);
     state.currentBatch = 0;
     state.uploadedCount = state.queue.filter(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED).length;
@@ -1783,13 +1997,21 @@
     showToast(`Starting queue: ${activeWaiting.length} video(s) in ${state.totalBatches} batch(es)`, 'info');
     renderUI();
     
+    let batchLimitRetries = 0;
+
     try {
       while (!state.stopRequested) {
+        if (state.runToken !== currentRunToken) return;
+        if (state.limitReached || (state.activeAlert && state.activeAlert.type === 'daily_limit')) {
+          console.warn('[XMON] Daily limit reached flag detected. Stopping queue processing.');
+          break;
+        }
+
         if (state.isPaused) {
           updateStatus('Queue paused. Click Resume to continue.', 'paused');
           renderUI();
           await waitForResume();
-          if (state.stopRequested) break;
+          if (state.stopRequested || state.runToken !== currentRunToken) break;
         }
 
         // Dynamically get the remaining waiting videos
@@ -1801,7 +2023,7 @@
 
         state.currentBatch++;
         const currentBatchVideos = waitingVideos.slice(0, state.batchSize);
-        const batchFiles = currentBatchVideos.filter(v => v.file).map(v => v.file);
+        const batchFiles = currentBatchVideos.filter(v => v.file).map(v => v.file).slice(0, 15);
         const expectedUploadCount = batchFiles.length;
 
         updateStatus(`Batch ${state.currentBatch}/${state.totalBatches} - Uploading ${currentBatchVideos.length} video(s)...`, 'active');
@@ -1834,7 +2056,7 @@
             await waitFor(() => {
               const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
               return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
-            }, 6000).catch(() => {});
+            }, 6000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
             await sleep(800);
           }
 
@@ -1851,7 +2073,7 @@
           await waitFor(() => {
             const d = deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
             return (!d || (!isDialogOpen(d) && !isElementVisible(d))) ? true : null;
-          }, 6000).catch(() => {});
+          }, 6000).catch(err => { if (err?.message === 'CANCELLED_BY_USER') throw err; return null; });
           await sleep(1500);
           
           // Step 5: Draft Verification on YouTube Studio Content page
@@ -1869,6 +2091,9 @@
           await closeStuckDialogs(true);
           await closeUploadDialog();
           
+          // Reset batch limit retries counter on successful batch
+          batchLimitRetries = 0;
+
           // Step 8: Delay before next batch if more waiting videos exist
           const remainingWaiting = state.queue.filter(v => v.status === STATUS.WAITING).length;
           if (remainingWaiting > 0 && !state.stopRequested) {
@@ -1883,7 +2108,24 @@
           console.error('[XMON] Batch error:', batchErr);
           
           if (batchErr.message === 'BATCH_LIMIT_EXCEEDED') {
-            console.warn('[XMON] Handling batch limit error: clamping batchSize to 15 and retrying waiting videos...');
+            batchLimitRetries++;
+            if (batchLimitRetries > 2) {
+              console.error('[XMON] Batch limit exceeded retry cap reached (2). Failing current batch.');
+              for (const video of currentBatchVideos) {
+                if (video.status === STATUS.UPLOADING) {
+                  video.status = STATUS.FAILED;
+                  video.error = 'YouTube batch upload limit exceeded (max 15 videos)';
+                  state.failedCount++;
+                }
+              }
+              showToast('Batch limit exceeded retry cap reached. Batch failed.', 'error', 4000);
+              await closeStuckDialogs(true);
+              renderUI();
+              saveQueueState();
+              continue;
+            }
+
+            console.warn(`[XMON] Handling batch limit error (attempt ${batchLimitRetries}/2): clamping batchSize to 15 and retrying waiting videos...`);
             state.batchSize = 15;
             for (const video of currentBatchVideos) {
               if (video.status === STATUS.UPLOADING) {
@@ -1905,7 +2147,7 @@
           
           if (isDailyLimit) {
             console.warn('[XMON] Daily upload limit reached. Halting queue safely.');
-            state.isRunning = false;
+            state.limitReached = true;
             state.isPaused = true;
             
             for (const video of currentBatchVideos) {
@@ -1953,16 +2195,24 @@
         saveQueueState();
       }
     } finally {
-      state.isRunning = false;
-      state.isPaused = false;
-      state.currentVideoName = '';
-      
-      const finalMsg = `Complete! Uploaded: ${state.uploadedCount}, Published: ${state.publishedCount}, Failed: ${state.failedCount}`;
-      updateStatus(finalMsg, 'idle');
-      saveQueueState();
-      renderUI();
-      
-      showToast(finalMsg, state.failedCount > 0 ? 'warning' : 'success', 5000);
+      if (state.runToken === currentRunToken) {
+        state.isRunning = false;
+        state.isPaused = false;
+        state.currentVideoName = '';
+
+        // P2-8: On stop, attempt to close any open upload dialog cleanly
+        if (state.stopRequested) {
+          try { await closeStuckDialogs(true); } catch(e) {}
+          try { await closeUploadDialog(); } catch(e) {}
+        }
+
+        const finalMsg = `Complete! Uploaded: ${state.uploadedCount}, Published: ${state.publishedCount}, Failed: ${state.failedCount}`;
+        updateStatus(finalMsg, 'idle');
+        saveQueueState();
+        renderUI();
+
+        showToast(finalMsg, state.failedCount > 0 ? 'warning' : 'success', 5000);
+      }
     }
   }
 
@@ -1973,6 +2223,7 @@
     let publishRound = 0;
     let consecutiveEmpty = 0;
     const publishedIdsThisRun = new Set();
+    const failedDraftKeys = new Set();
     
     while (!state.stopRequested && publishRound < maxToPublish) {
       if (state.isPaused) {
@@ -1980,12 +2231,19 @@
         if (state.stopRequested) break;
       }
       
-      const drafts = findDraftRows().filter(d => !publishedIdsThisRun.has(d.videoId || d.title));
+      const drafts = findDraftRows().filter(d => {
+        const key = d.videoId || d.title;
+        return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
+      });
+
       if (drafts.length === 0) {
         if (state.config.autoScroll) {
           window.scrollBy(0, 800);
           await sleep(2000);
-          const moreDrafts = findDraftRows().filter(d => !publishedIdsThisRun.has(d.videoId || d.title));
+          const moreDrafts = findDraftRows().filter(d => {
+            const key = d.videoId || d.title;
+            return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
+          });
           if (moreDrafts.length === 0) {
             consecutiveEmpty++;
             if (consecutiveEmpty >= 2) break;
@@ -2004,30 +2262,50 @@
       
       const idx = publishRound + 1;
       const total = Math.min(drafts.length + publishRound, maxToPublish);
+      const draftKey = currentDraft.videoId || currentDraft.title;
+      const maxRetries = Math.max(1, state.config.maxRetries || 2);
+      let pubSuccess = false;
+      let lastErr = null;
       
-      try {
-        await publishSingleDraft(currentDraft, idx, total);
-        publishedIdsThisRun.add(currentDraft.videoId || currentDraft.title);
-        updateStatus(`Published (${state.publishedCount}): ${currentDraft.title.substring(0, 30)}`, 'active');
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (state.stopRequested) break;
+        try {
+          await publishSingleDraft(currentDraft, idx, total);
+          pubSuccess = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (err.message === 'CANCELLED_BY_USER') throw err;
+          console.warn(`[XMON] Standalone publish attempt ${attempt}/${maxRetries} failed for "${currentDraft.title}":`, err);
+          await closeStuckDialogs(true);
+          if (attempt < maxRetries) await sleep(1500);
+        }
+      }
+
+      if (pubSuccess) {
+        publishedIdsThisRun.add(draftKey);
+        state.standalonePublished = (state.standalonePublished || 0) + 1;
+        updateStatus(`Published (${state.standalonePublished}): ${currentDraft.title.substring(0, 30)}`, 'active');
         
         for (const qItem of state.queue) {
           if (qItem.status === STATUS.UPLOADED || qItem.status === STATUS.DRAFT) {
             const qName = normalizeVideoTitle(qItem.name);
             const draftTitle = normalizeVideoTitle(currentDraft.title);
-            if (draftTitle.includes(qName) || qName.includes(draftTitle)) {
+            if (isTitleMatching(qName, draftTitle)) {
               qItem.status = STATUS.PUBLISHED;
               break;
             }
           }
         }
         renderUI();
-      } catch (err) {
-        if (err.message === 'CANCELLED_BY_USER') break;
-        console.error(`[XMON] Error publishing "${currentDraft.title}":`, err);
+      } else {
+        console.error(`[XMON] Skipping failed draft "${currentDraft.title}" after ${maxRetries} attempts:`, lastErr);
+        failedDraftKeys.add(draftKey);
+        state.standaloneFailed = (state.standaloneFailed || 0) + 1;
         currentDraft.row.setAttribute('data-xmon-status', 'failed');
         currentDraft.row.style.outline = '2px solid #e74c3c';
-        state.failedCount++;
         await closeStuckDialogs(true);
+        renderUI();
       }
       
       await sleep(state.config.delayBetweenVideos);
@@ -2043,8 +2321,8 @@
     state.isRunning = true;
     state.stopRequested = false;
     state.isPaused = false;
-    state.publishedCount = 0;
-    state.failedCount = 0;
+    state.standalonePublished = 0;
+    state.standaloneFailed = 0;
     
     updateStatus('Starting draft publishing...', 'active');
     renderUI();
@@ -2053,10 +2331,10 @@
       await publishAllDrafts();
     } finally {
       state.isRunning = false;
-      const msg = `Draft publishing complete! Published: ${state.publishedCount}, Failed: ${state.failedCount}`;
+      const msg = `Draft publishing complete! Published: ${state.standalonePublished}, Failed: ${state.standaloneFailed}`;
       updateStatus(msg, 'idle');
       renderUI();
-      showToast(msg, state.failedCount > 0 ? 'warning' : 'success', 5000);
+      showToast(msg, state.standaloneFailed > 0 ? 'warning' : 'success', 5000);
     }
   }
 
@@ -2114,14 +2392,28 @@
     
     const statusText = document.getElementById('xmon-status-text');
     const statusDot = document.getElementById('xmon-status-dot');
+    const pubStatusText = document.getElementById('xmon-pub-status-text');
+    const pubStatusDot = document.getElementById('xmon-pub-status-dot');
     
-    if (statusText) statusText.textContent = message;
-    if (statusDot) {
-      statusDot.className = 'xmon-status-indicator';
-      if (type === 'active') statusDot.classList.add('active');
-      else if (type === 'paused') statusDot.classList.add('paused');
-      else if (type === 'error') statusDot.classList.add('error');
+    if (statusText) {
+      statusText.textContent = message;
+      statusText.setAttribute('title', message);
     }
+    if (pubStatusText) {
+      pubStatusText.textContent = message;
+      pubStatusText.setAttribute('title', message);
+    }
+
+    const applyDotClass = (dot) => {
+      if (!dot) return;
+      dot.className = 'xmon-status-indicator';
+      if (type === 'active') dot.classList.add('active');
+      else if (type === 'paused') dot.classList.add('paused');
+      else if (type === 'error') dot.classList.add('error');
+    };
+
+    applyDotClass(statusDot);
+    applyDotClass(pubStatusDot);
   }
 
   // ============================================================
@@ -2147,13 +2439,14 @@
       if (footer) footer.style.display = 'none';
     }
 
-    // Hidden file input for click-to-browse
+    // Hidden file input for click-to-browse: remove duplicate if already present
+    document.getElementById('xmon-file-input')?.remove();
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.id = 'xmon-file-input';
     fileInput.className = 'xmon-file-input';
     fileInput.setAttribute('data-xmon-internal', 'true');
-    fileInput.accept = 'video/*';
+    fileInput.accept = 'video/*,.mp4,.mov,.webm,.mkv,.avi,.m4v';
     fileInput.multiple = true;
     document.body.appendChild(fileInput);
 
@@ -2161,16 +2454,33 @@
     restoreQueueState();
   }
 
+  // ============================================================
+  // RECOMPUTE COUNTERS FROM QUEUE STATE
+  // ============================================================
+  function recomputeCounters() {
+    state.totalCount = state.queue.length;
+    state.uploadedCount = state.queue.filter(v => v.status === STATUS.UPLOADED || v.status === STATUS.PUBLISHED).length;
+    state.publishedCount = state.queue.filter(v => v.status === STATUS.PUBLISHED).length;
+    state.failedCount = state.queue.filter(v => v.status === STATUS.FAILED).length;
+    const batchCountFromTotal = state.batchSize > 0 ? Math.ceil(state.queue.length / state.batchSize) : 0;
+    state.totalBatches = Math.max(state.currentBatch, batchCountFromTotal);
+  }
+
   function buildWidgetHTML() {
+    recomputeCounters();
     const queueCount = state.queue.length;
-    const failedCount = state.queue.filter(v => v.status === STATUS.FAILED).length;
-    const completedCount = state.queue.filter(v => v.status === STATUS.PUBLISHED || v.status === STATUS.UPLOADED).length;
+    const failedCount = state.failedCount;
+    const completedCount = state.uploadedCount;
     const totalProgress = queueCount > 0 ? Math.round((completedCount / queueCount) * 100) : 0;
-    const draftsOnScreen = findDraftRows().length;
+    // P3-1: Only call findDraftRows() when the Publish tab is active (or for badge on tab bar).
+    // Cache the result for this render cycle so we don't double-scan.
+    const draftsOnScreen = (state.activeTab === 'publish') ? findDraftRows().length : (state._cachedDraftCount || 0);
 
     // Animated in-widget alert banner HTML
+    // P2-1: Use class instead of id for dismiss button — prevents duplicate IDs when banner
+    // appears in both Upload and Queue panels simultaneously.
     const alertBannerHTML = state.activeAlert ? `
-      <div class="xmon-alert-card ${state.activeAlert.type}" id="xmon-active-alert-box">
+      <div class="xmon-alert-card ${state.activeAlert.type} xmon-active-alert-box">
         <div class="xmon-alert-header">
           <div class="xmon-alert-icon-wrap">
             ${state.activeAlert.type === 'daily_limit' ? ICONS.alertTriangle : ICONS.alertCircle}
@@ -2180,7 +2490,7 @@
             <span class="xmon-alert-title">${escapeHtml(state.activeAlert.title)}</span>
             <span class="xmon-alert-msg">${escapeHtml(state.activeAlert.message)}</span>
           </div>
-          <button class="xmon-alert-dismiss" id="xmon-dismiss-alert-btn" title="Dismiss" type="button">
+          <button class="xmon-alert-dismiss xmon-dismiss-alert-btn" title="Dismiss" type="button">
             ${ICONS.x}
           </button>
         </div>
@@ -2283,7 +2593,7 @@
           <!-- Status Bar -->
           <div class="xmon-status-bar">
             <div class="xmon-status-indicator ${state.statusType === 'active' ? 'active' : state.statusType === 'paused' ? 'paused' : state.statusType === 'error' ? 'error' : ''}" id="xmon-status-dot"></div>
-            <span class="xmon-status-text" id="xmon-status-text">${state.statusMessage}</span>
+            <span class="xmon-status-text" id="xmon-status-text" title="${escapeHtml(state.statusMessage)}">${escapeHtml(state.statusMessage)}</span>
           </div>
 
           <!-- Actions -->
@@ -2347,11 +2657,11 @@
           <div class="xmon-section-title">Video Queue (${queueCount})</div>
           <div class="xmon-queue-list" id="xmon-queue-list">
             ${state.queue.map((v, i) => `
-              <div class="xmon-queue-item status-${v.status}" data-id="${v.id}">
+              <div class="xmon-queue-item status-${escapeHtml(v.status)}" data-id="${escapeHtml(v.id)}">
                 <span class="xmon-queue-num">${i + 1}</span>
-                <span class="xmon-queue-name" title="${v.name}">${v.name}</span>
-                <span class="xmon-queue-status ${v.status}">${v.status}</span>
-                ${v.status === STATUS.FAILED ? `<button class="xmon-queue-retry-btn" data-retry-id="${v.id}" type="button">Retry</button>` : ''}
+                <span class="xmon-queue-name" title="${escapeHtml(v.name)}">${escapeHtml(v.name)}</span>
+                <span class="xmon-queue-status ${escapeHtml(v.status)}">${escapeHtml(v.status)}</span>
+                ${v.status === STATUS.FAILED ? `<button class="xmon-queue-retry-btn" data-retry-id="${escapeHtml(v.id)}" type="button">Retry</button>` : ''}
               </div>
             `).join('')}
           </div>
@@ -2371,18 +2681,18 @@
 
           <div class="xmon-stats" style="grid-template-columns: repeat(2, 1fr);">
             <div class="xmon-stat">
-              <span class="xmon-stat-val success">${state.publishedCount}</span>
+              <span class="xmon-stat-val success">${state.standalonePublished || 0}</span>
               <span class="xmon-stat-lbl">Published</span>
             </div>
             <div class="xmon-stat">
-              <span class="xmon-stat-val danger">${state.failedCount}</span>
+              <span class="xmon-stat-val danger">${state.standaloneFailed || 0}</span>
               <span class="xmon-stat-lbl">Skipped</span>
             </div>
           </div>
 
           <div class="xmon-status-bar">
             <div class="xmon-status-indicator ${state.statusType === 'active' ? 'active' : ''}" id="xmon-pub-status-dot"></div>
-            <span class="xmon-status-text" id="xmon-pub-status-text">${state.statusMessage}</span>
+            <span class="xmon-status-text" id="xmon-pub-status-text" title="${escapeHtml(state.statusMessage)}">${escapeHtml(state.statusMessage)}</span>
           </div>
 
           <div class="xmon-actions">
@@ -2465,6 +2775,21 @@
               </select>
             </div>
           </div>
+
+          <div class="xmon-divider"></div>
+
+          <!-- P5 Diagnostics -->
+          <div class="xmon-section-title" style="margin-top:4px;">Diagnostics</div>
+          <div class="xmon-actions">
+            <button class="xmon-btn xmon-btn-secondary" id="xmon-copy-log-btn" type="button" style="font-size:11px;">
+              <span class="xmon-btn-icon">${ICONS.list}</span>
+              <span>Copy Debug Log</span>
+            </button>
+            <button class="xmon-btn xmon-btn-secondary" id="xmon-health-check-btn" type="button" style="font-size:11px;">
+              <span class="xmon-btn-icon">${ICONS.refresh}</span>
+              <span>Selector Health</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2477,30 +2802,113 @@
   }
 
   // ============================================================
-  // RENDER UI (re-render body content)
+  // RENDER UI — P3-2: throttled, targeted DOM updates
+  // Full rebuild only on tab switch / minimize change.
+  // Incremental update (~4/s) for stats, progress, status only.
   // ============================================================
+  let _renderScheduled = false;
+  let _lastFullRenderTab = null;
+  let _lastMinimizedState = null;
+
   function renderUI() {
     const widget = document.getElementById('xmon-widget');
     if (!widget) return;
-    
-    if (state.isMinimized) {
-      widget.classList.add('xmon-minimized');
-    } else {
-      widget.classList.remove('xmon-minimized');
+
+    const tabChanged = state.activeTab !== _lastFullRenderTab;
+    const minimizedChanged = state.isMinimized !== _lastMinimizedState;
+
+    // Full rebuild required on tab/minimize change
+    if (tabChanged || minimizedChanged) {
+      _lastFullRenderTab = state.activeTab;
+      _lastMinimizedState = state.isMinimized;
+      _renderScheduled = false;
+
+      if (state.isMinimized) {
+        widget.classList.add('xmon-minimized');
+      } else {
+        widget.classList.remove('xmon-minimized');
+      }
+
+      widget.innerHTML = buildWidgetHTML();
+      attachEventListeners();
+
+      if (state.isMinimized) {
+        const tabs = widget.querySelector('.xmon-tabs');
+        const panels = widget.querySelectorAll('.xmon-tab-panel');
+        const footer = widget.querySelector('.xmon-footer');
+        if (tabs) tabs.style.display = 'none';
+        panels.forEach(p => p.style.display = 'none');
+        if (footer) footer.style.display = 'none';
+      }
+      return;
     }
 
-    widget.innerHTML = buildWidgetHTML();
-    attachEventListeners();
-    
-    if (state.isMinimized) {
-      // Hide everything except header
-      const tabs = widget.querySelector('.xmon-tabs');
-      const panels = widget.querySelectorAll('.xmon-tab-panel');
-      const footer = widget.querySelector('.xmon-footer');
-      if (tabs) tabs.style.display = 'none';
-      panels.forEach(p => p.style.display = 'none');
-      if (footer) footer.style.display = 'none';
+    // Throttle incremental updates to ~4/s (250ms)
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    setTimeout(() => {
+      _renderScheduled = false;
+      _renderIncremental(widget);
+    }, 250);
+  }
+
+  // Targeted DOM updates without full innerHTML rebuild
+  function _renderIncremental(widget) {
+    if (!widget) return;
+    recomputeCounters();
+
+    // --- Status text / dot ---
+    const st = widget.querySelector('#xmon-status-text, #xmon-pub-status-text');
+    if (st) {
+      st.textContent = state.statusMessage;
+      st.setAttribute('title', state.statusMessage);
     }
+    widget.querySelectorAll('#xmon-status-dot, #xmon-pub-status-dot').forEach(dot => {
+      dot.className = 'xmon-status-indicator';
+      if (state.statusType === 'active') dot.classList.add('active');
+      else if (state.statusType === 'paused') dot.classList.add('paused');
+      else if (state.statusType === 'error') dot.classList.add('error');
+    });
+
+    // --- Stats ---
+    const queueCount = state.queue.length;
+    const totalProgress = queueCount > 0 ? Math.round((state.uploadedCount / queueCount) * 100) : 0;
+    const statVals = widget.querySelectorAll('.xmon-stat-val');
+    if (statVals.length >= 4) {
+      statVals[0].textContent = queueCount;
+      statVals[1].textContent = state.uploadedCount;
+      statVals[2].textContent = state.publishedCount;
+      statVals[3].textContent = state.failedCount;
+    }
+
+    // --- Progress bar ---
+    const fill = widget.querySelector('.xmon-progress-bar-fill');
+    if (fill) fill.style.width = totalProgress + '%';
+
+    // --- Batch info ---
+    const batchVal = widget.querySelector('.xmon-batch-value');
+    if (batchVal) batchVal.textContent = `${state.currentBatch} / ${state.totalBatches}`;
+
+    // --- Queue list rows (status badges only) ---
+    widget.querySelectorAll('.xmon-queue-item[data-id]').forEach(row => {
+      const vid = state.queue.find(v => v.id === row.dataset.id);
+      if (!vid) return;
+      row.className = `xmon-queue-item status-${vid.status}`;
+      const badge = row.querySelector('.xmon-queue-status');
+      if (badge) { badge.textContent = vid.status; badge.className = `xmon-queue-status ${vid.status}`; }
+    });
+
+    // --- Draft count on Publish tab (P3-1: only when tab active) ---
+    const draftsEl = widget.querySelector('#xmon-drafts-count');
+    if (draftsEl && state.activeTab === 'publish') {
+      const cnt = findDraftRows().length;
+      state._cachedDraftCount = cnt;
+      draftsEl.textContent = cnt;
+    }
+
+    // --- Tab badge on Publish tab ---
+    const publishTabBadge = widget.querySelector('.xmon-tab[data-tab="publish"] .xmon-tab-badge');
+    if (publishTabBadge) publishTabBadge.textContent = state._cachedDraftCount || 0;
   }
 
   // ============================================================
@@ -2533,15 +2941,16 @@
       };
     });
 
-    // Alert dismissal
-    const dismissAlertBtn = document.getElementById('xmon-dismiss-alert-btn');
-    if (dismissAlertBtn) {
-      dismissAlertBtn.onclick = (e) => {
+    // Alert dismissal — P2-1: use querySelectorAll (class) to handle multiple panels
+    document.querySelectorAll('#xmon-widget .xmon-dismiss-alert-btn').forEach(btn => {
+      btn.onclick = (e) => {
         e.stopPropagation();
         state.activeAlert = null;
+        state.limitReached = false;
+        saveQueueState();
         renderUI();
       };
-    }
+    });
 
     // Dropzone
     const dropzone = document.getElementById('xmon-dropzone');
@@ -2622,7 +3031,7 @@
             v.retryCount = (v.retryCount || 0) + 1;
           }
         });
-        state.failedCount = 0;
+        recomputeCounters();
         showToast('Failed videos queued for retry', 'info');
         renderUI();
         saveQueueState();
@@ -2639,12 +3048,8 @@
         }
         state.queue = [];
         state.processedIds.clear();
-        state.totalCount = 0;
-        state.uploadedCount = 0;
-        state.publishedCount = 0;
-        state.failedCount = 0;
         state.currentBatch = 0;
-        state.totalBatches = 0;
+        recomputeCounters();
         updateStatus('Queue cleared. Ready.', 'idle');
         showToast('Queue cleared', 'info');
         renderUI();
@@ -2667,7 +3072,7 @@
           video.status = STATUS.WAITING;
           video.error = null;
           video.retryCount = (video.retryCount || 0) + 1;
-          state.failedCount = Math.max(0, state.failedCount - 1);
+          recomputeCounters();
           showToast(`Queued "${video.name}" for retry`, 'info');
           renderUI();
           saveQueueState();
@@ -2696,6 +3101,40 @@
 
     const batchDelaySelect = document.getElementById('xmon-batch-delay-select');
     if (batchDelaySelect) batchDelaySelect.onchange = (e) => { state.config.delayBetweenBatches = parseInt(e.target.value); saveQueueState(); };
+
+    // P5: Copy Debug Log
+    const copyLogBtn = document.getElementById('xmon-copy-log-btn');
+    if (copyLogBtn) {
+      copyLogBtn.onclick = () => {
+        const log = getDebugLog();
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(log).then(() => showToast('Debug log copied to clipboard!', 'success', 3000));
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = log;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          showToast('Debug log copied!', 'success', 3000);
+        }
+      };
+    }
+
+    // P5: Selector Health Check
+    const healthBtn = document.getElementById('xmon-health-check-btn');
+    if (healthBtn) {
+      healthBtn.onclick = () => {
+        const results = runSelectorHealthCheck();
+        const pass = results.filter(r => r.found).length;
+        const fail = results.filter(r => !r.found).length;
+        const summary = results.map(r =>
+          `${r.found ? (r.visible ? '✓' : '~') : '✗'} ${r.name}`
+        ).join('\n');
+        showToast(`Health: ${pass} found, ${fail} missing. Check console for details.`, fail > 0 ? 'warning' : 'success', 6000);
+        console.log('[XMON] Selector Health Check:\n' + summary);
+      };
+    }
   }
 
   // ============================================================
@@ -2706,34 +3145,64 @@
 
     const files = Array.from(fileList);
     
-    // Filter video files only
-    const videoFiles = files.filter(f => f.type.startsWith('video/'));
+    // Filter video files by MIME type or known video extension
+    const isVideo = (f) => (f.type && f.type.startsWith('video/')) || /\.(mp4|mov|webm|mkv|avi|m4v|flv|wmv)$/i.test(f.name || '');
+    const videoFiles = [];
+    const skippedFiles = [];
+
+    for (const f of files) {
+      if (isVideo(f)) {
+        videoFiles.push(f);
+      } else {
+        skippedFiles.push(f);
+      }
+    }
+
+    if (skippedFiles.length > 0) {
+      const skippedNames = skippedFiles.map(f => f.name).slice(0, 3).join(', ') + (skippedFiles.length > 3 ? '...' : '');
+      showToast(`${skippedFiles.length} non-video file(s) skipped (${skippedNames}).`, 'warning', 4000);
+    }
     
     if (videoFiles.length === 0) {
-      showToast('No video files detected. Please drop video files.', 'error');
+      showToast('No video files detected. Please drop video files (e.g. .mp4, .mov, .mkv, .webm).', 'error');
       return;
     }
 
-    // Check max limit
-    const currentCount = state.queue.length;
-    const maxAllowed = 100 - currentCount;
-    
+    // P2-6: Count only UNFINISHED items toward max-100 (published/failed don't block new adds)
+    const unfinishedCount = state.queue.filter(v =>
+      v.status !== STATUS.PUBLISHED && v.status !== STATUS.FAILED
+    ).length;
+    const maxAllowed = 100 - unfinishedCount;
+
     if (maxAllowed <= 0) {
-      showToast('Queue is full (100 videos max). Clear some videos first.', 'warning');
+      showToast('Queue is full (100 unfinished videos max). Clear or publish completed videos first.', 'warning');
       return;
     }
 
     const filesToAdd = videoFiles.slice(0, maxAllowed);
-    
+
     if (videoFiles.length > maxAllowed) {
       showToast(`Only ${maxAllowed} more videos can be added. ${videoFiles.length - maxAllowed} skipped.`, 'warning');
     }
 
     // Check for duplicates by filename
     let duplicateCount = 0;
+    let reattachedCount = 0;
     const newVideos = [];
     
     for (const file of filesToAdd) {
+      // Re-attach file object to existing restored queue items if matching name and size
+      const existingNeedsFile = state.queue.find(v => v.name === file.name && v.size === file.size && !v.file);
+      if (existingNeedsFile) {
+        existingNeedsFile.file = file;
+        if (existingNeedsFile.status === STATUS.NEEDS_FILE) {
+          existingNeedsFile.status = STATUS.WAITING;
+          existingNeedsFile.error = null;
+        }
+        reattachedCount++;
+        continue;
+      }
+
       const isDuplicate = state.queue.some(v => v.name === file.name && v.size === file.size);
       if (isDuplicate) {
         duplicateCount++;
@@ -2755,14 +3224,14 @@
       showToast(`${duplicateCount} duplicate video(s) skipped.`, 'warning');
     }
 
+    if (reattachedCount > 0) {
+      showToast(`Re-attached ${reattachedCount} file(s) to resume queue.`, 'info');
+      saveQueueState();
+    }
+
     if (newVideos.length > 0) {
       state.queue.push(...newVideos);
-      state.totalCount = state.queue.length;
-      // Calculate total batches based on all non-completed videos
-      const processableCount = state.queue.filter(v =>
-        v.status === STATUS.WAITING || v.status === STATUS.FAILED
-      ).length;
-      state.totalBatches = Math.ceil(processableCount / state.batchSize);
+      recomputeCounters();
       
       showToast(`${newVideos.length} video(s) added to queue.`, 'success');
       updateStatus(`${state.queue.length} video(s) in queue. Ready to start.`, 'idle');
@@ -2774,43 +3243,49 @@
 
   // ============================================================
   // PERIODIC UI UPDATES
+  // P3-3: Raise interval to 4s; gate detectYouTubeUploadError to
+  // only run when upload dialog is present or queue is running.
+  // P3-1: Draft count update only when Publish tab is active.
   // ============================================================
   let _periodicUpdateIntervalId = null;
 
   function startPeriodicUpdates() {
-    // Prevent stacking multiple intervals on SPA navigation
     if (_periodicUpdateIntervalId !== null) {
       clearInterval(_periodicUpdateIntervalId);
       _periodicUpdateIntervalId = null;
     }
     _periodicUpdateIntervalId = setInterval(() => {
-      // Update drafts count on publish tab
-      const draftsCountEl = document.getElementById('xmon-drafts-count');
-      if (draftsCountEl) {
-        draftsCountEl.textContent = findDraftRows().length;
-      }
-      
-      // Auto-detect YouTube daily limit error if visible on screen
-      if (!state.activeAlert) {
-        const detected = detectYouTubeUploadError();
-        if (detected && detected.type === 'daily_limit') {
-          state.activeAlert = detected;
-          updateStatus('Daily upload limit reached. You can upload more videos in 24 hours.', 'error');
-          showAnimatedNotification({
-            type: 'daily_limit',
-            title: detected.title,
-            message: detected.message,
-            persistent: true
-          });
-          if (state.isRunning) {
-            state.isRunning = false;
-            state.isPaused = true;
-          }
-          renderUI();
-          saveQueueState();
+      // P3-1: Update draft count only when publish tab is visible
+      if (state.activeTab === 'publish') {
+        const draftsCountEl = document.getElementById('xmon-drafts-count');
+        if (draftsCountEl) {
+          const cnt = findDraftRows().length;
+          state._cachedDraftCount = cnt;
+          draftsCountEl.textContent = cnt;
         }
       }
-    }, 2500);
+
+      // P3-3: Only run error detector when an upload dialog exists or queue is actively running
+      if (!state.activeAlert) {
+        const hasUploadDialog = !!deepQuery('ytcp-uploads-dialog, ytcp-multi-file-upload-dialog');
+        if (hasUploadDialog || state.isRunning) {
+          const detected = detectYouTubeUploadError();
+          if (detected && detected.type === 'daily_limit') {
+            state.activeAlert = { ...detected, at: Date.now() };
+            state.limitReached = true;
+            updateStatus('Daily upload limit reached. You can upload more videos in 24 hours.', 'error');
+            showAnimatedNotification({
+              type: 'daily_limit',
+              title: detected.title,
+              message: detected.message,
+              persistent: true
+            });
+            renderUI();
+            saveQueueState();
+          }
+        }
+      }
+    }, 4000);
   }
 
   // ============================================================
@@ -2839,6 +3314,38 @@
       }
     }
   }, 1500);
+
+  // Expose internals on window.__XMON_DEV__ for verification & automated testing
+  Object.assign(window.__XMON_DEV__, {
+    deepQuery,
+    deepQueryAll,
+    isDialogOpen,
+    isElementVisible,
+    normalizeVideoTitle,
+    isTitleMatching,
+    findDraftRows,
+    verifyAndSyncBatchDrafts,
+    waitForBatchUploadComplete,
+    publishBatchDrafts,
+    publishSingleDraft,
+    publishAllDrafts,
+    processQueue,
+    saveQueueState,
+    restoreQueueState,
+    detectYouTubeUploadError,
+    recomputeCounters,
+    escapeHtml,
+    buildWidgetHTML,
+    handleFileDrop,
+    STATUS,
+    state,
+    // P5 diagnostics
+    xmonLog,
+    getDebugLog,
+    runSelectorHealthCheck,
+    __setState: (newState) => Object.assign(state, newState),
+    __getState: () => state
+  });
 
   // Initial load
   if (document.readyState === 'loading') {
