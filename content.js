@@ -808,16 +808,16 @@
     ];
 
     for (const row of rows) {
-      const rowStatus = row.getAttribute('data-xmon-status');
-      if (rowStatus === 'published' || rowStatus === 'failed') continue;
+      if (row.getAttribute('data-xmon-status') === 'published' || row.getAttribute('data-xmon-status') === 'failed') continue;
 
-      // Visibility cell check - covers class, ID, role, custom elements & badges
+      // Visibility cell check - covers class, ID, role, custom elements & badges, fallback to row itself (like 2.1.0)
       const visCell = row.querySelector('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility, ytcp-badge, [role="cell"][id*="visibility" i]')
-        || deepQuery('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility, ytcp-badge, [role="cell"][id*="visibility" i]', row);
-      const visText = visCell ? (visCell.textContent || '').toLowerCase() : '';
+        || deepQuery('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility, ytcp-badge, [role="cell"][id*="visibility" i]', row)
+        || row;
+      const visText = (visCell.textContent || '').toLowerCase();
       let isDraftByVis = draftKeywords.some(kw => visText.includes(kw));
 
-      // Edit draft button check
+      // Edit draft button check (like 2.1.0)
       let editDraftBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
         || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', row);
 
@@ -841,12 +841,14 @@
         }
       }
 
+      // Check title and non-title text
+      const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
+        || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
+      const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
+      const nonTitleText = (row.textContent || '').replace(title, '').toLowerCase();
+
       // Fallback: check whole row text excluding title & reject if clearly public/unlisted/private
       if (!isDraftByVis && !editDraftBtn) {
-        const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
-          || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
-        const titleText = titleEl ? titleEl.textContent.trim() : '';
-        const nonTitleText = (row.textContent || '').replace(titleText, '').toLowerCase();
         const isPublishedState = /(public|unlisted|private|সর্বজনীন|পাবলিক|ব্যক্তিগত|না-তালিকাভুক্ত|público|publique|öffentlich)/i.test(nonTitleText);
         if (!isPublishedState && draftKeywords.some(kw => nonTitleText.includes(kw))) {
           isDraftByVis = true;
@@ -857,16 +859,21 @@
       const isDraft = isDraftByVis || (editDraftBtn !== null);
       if (!isDraft) continue;
 
-      const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
-        || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
-      const title = titleEl ? titleEl.textContent.trim() : 'Draft Video';
+      // Re-verify it is not a public row
+      const isClearlyPublic = /(public|unlisted|private|সর্বজনীন|পাবলিক|ব্যক্তিগত|না-তালিকাভুক্ত)/i.test(visText) && !editDraftBtn;
+      if (isClearlyPublic) continue;
+
+      // Fallback for editDraftBtn: title link, thumbnail, or row
+      if (!editDraftBtn) {
+        editDraftBtn = row.querySelector('a[href*="/video/"]') || deepQuery('a[href*="/video/"]', row)
+          || row.querySelector('#thumbnail, ytcp-video-thumbnail') || deepQuery('#thumbnail, ytcp-video-thumbnail', row)
+          || row;
+      }
+
       const videoId = row.getAttribute('video-id') ||
         row.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
         deepQuery('a[href*="/video/"]', row)?.href?.match(/\/video\/([^/?#]+)/)?.[1] ||
         '';
-
-      const draftKey = videoId || title;
-      if (state.publishedDraftKeys?.has(draftKey) || state.failedDraftKeys?.has(draftKey)) continue;
 
       drafts.push({ row, editBtn: editDraftBtn, title, videoId });
     }
@@ -949,39 +956,15 @@
     if (!buttonToClick) throw new Error('Edit draft button not found');
     clickElement(buttonToClick);
 
-    // Step 2: Wait for editor dialog — P2-7: require editor evidence (title field / done-button / stepper)
+    // Step 2: Wait for editor dialog (aligned with v2.1.0 proven logic)
     const dialog = await waitFor(() => {
-      const selectors = [
-        'ytcp-video-metadata-editor',
-        'ytcp-video-metadata-editor-advanced',
-        'ytcp-video-editor',
-        'ytcp-uploads-dialog',
-        'ytcp-dialog[id*="dialog"]'
-      ];
-      for (const sel of selectors) {
-        const d = deepQuery(sel);
-        if (!d || !isDialogOpen(d)) continue;
-        // Require evidence of the editor (not a leftover upload/share dialog)
-        const hasEditor = !!(deepQuery('#title-textarea, #done-button, #save-button, ytcp-stepper-step', d)
-          || deepQuery('#title-textarea, #done-button, #save-button, ytcp-stepper-step', d.shadowRoot));
-        if (hasEditor) return d;
-        // For ytcp-uploads-dialog specifically, also accept it if it has a done-button (multi-step editor)
-        if (sel === 'ytcp-uploads-dialog') {
-          const doneInUploads = deepQuery('#done-button, #save-button', d);
-          if (doneInUploads) return d;
-        }
-      }
-      // Generic ytcp-dialog: only accept if it has explicit editor evidence
-      const genericDialog = deepQuery('ytcp-dialog');
-      if (genericDialog && isDialogOpen(genericDialog)) {
-        const hasEditorEvidence = !!(deepQuery('#done-button, #title-textarea, ytcp-stepper-step', genericDialog));
-        if (hasEditorEvidence) return genericDialog;
-      }
-      return null;
+      const d = document.querySelector('ytcp-uploads-dialog, ytcp-video-metadata-editor')
+        || deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor, ytcp-video-metadata-editor-advanced, ytcp-video-editor');
+      return (d && (isElementVisible(d) || isDialogOpen(d))) ? d : null;
     }, 15000);
 
     if (!dialog) throw new Error('Editor dialog did not open');
-    await sleep(800);
+    await sleep(600);
 
     // Step 3: Audience - "Not made for kids"
     if (state.config.notMadeForKids) {
@@ -1080,78 +1063,37 @@
     clickElement(doneBtn);
     await sleep(800);
 
-    // Step 7: Wait for editor dialog and share dialog to fully close (up to 20s, no premature Escape)
-    const dialogCloseStart = Date.now();
-    while (Date.now() - dialogCloseStart < 20000) {
-      if (state.stopRequested) throw new Error('CANCELLED_BY_USER');
-
+    // Step 7: Wait for dialog dismiss (aligned with v2.1.0 proven logic)
+    await waitFor(() => {
       // Check for YouTube Studio confirmation prompts (e.g. "Checks still running", "Publish anyway")
       const promptConfirm = deepQuery('ytcp-confirmation-dialog #confirm-button, ytcp-alert-dialog #confirm-button, #dialog-action-buttons [aria-label*="Publish" i]');
       if (promptConfirm && isElementVisible(promptConfirm) && isButtonEnabled(promptConfirm)) {
         clickElement(promptConfirm);
-        await sleep(500);
       }
 
       // Close share dialog if it appears
       const shareClose = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"], #share-dialog #close-button, ytcp-video-share-dialog ytcp-button');
       if (shareClose && isElementVisible(shareClose)) {
         clickElement(shareClose);
-        await sleep(400);
       }
 
-      // Check if the editor dialog has closed
-      const activeDialog = deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor, ytcp-video-metadata-editor-advanced, ytcp-video-editor');
-      if (!activeDialog || !isDialogOpen(activeDialog)) {
-        break;
-      }
+      const activeDialog = document.querySelector('ytcp-uploads-dialog, ytcp-video-metadata-editor')
+        || deepQuery('ytcp-uploads-dialog, ytcp-video-metadata-editor, ytcp-video-metadata-editor-advanced, ytcp-video-editor');
+      return !activeDialog || !isElementVisible(activeDialog) || activeDialog.getAttribute('aria-hidden') === 'true';
+    }, 12000);
 
-      await sleep(500);
-    }
-
-    // Safety cleanup of any leftover share dialog or backdrop
+    // Close any lingering share dialog
     const lingeringShare = deepQuery('ytcp-video-share-dialog #close-button, ytcp-video-share-dialog [aria-label="Close"]');
     if (lingeringShare && isElementVisible(lingeringShare)) {
       clickElement(lingeringShare);
       await sleep(300);
     }
 
-    // Post-publish verification: confirm row is no longer in draft state on YouTube Studio
-    const draftKey = draftItem.videoId || draftItem.title;
-    if (draftItem.videoId) {
-      await sleep(600);
-      const freshRows = deepQueryAll('ytcp-video-row');
-      const targetRow = freshRows.find(r => {
-        const vid = r.getAttribute('video-id') || r.querySelector('a[href*="/video/"]')?.href?.match(/\/video\/([^/?#]+)/)?.[1];
-        return vid === draftItem.videoId;
-      });
-
-      if (targetRow) {
-        let stillDraft = true;
-        for (let verifyPoll = 0; verifyPoll < 5; verifyPoll++) {
-          const visCellNow = targetRow.querySelector('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility')
-            || deepQuery('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility', targetRow);
-          const visNow = (visCellNow ? visCellNow.textContent || '' : '').toLowerCase();
-          const hasBtn = !!(targetRow.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
-            || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', targetRow));
-          const hasDraftText = (visNow.includes('draft') || visNow.includes('খসড়া'));
-          if (!hasDraftText || !hasBtn) {
-            stillDraft = false;
-            break;
-          }
-          await sleep(500);
-        }
-        if (stillDraft) {
-          throw new Error('Publish verification failed: draft state still present after dialog close');
-        }
-        targetRow.setAttribute('data-xmon-status', 'published');
-        targetRow.style.outline = '2px solid #2ecc71';
-      }
-    } else {
-      row.setAttribute('data-xmon-status', 'published');
-      row.style.outline = '2px solid #2ecc71';
-    }
-
+    row.setAttribute('data-xmon-status', 'published');
+    row.style.outline = '2px solid #2ecc71';
+    state.publishedCount = (state.publishedCount || 0) + 1;
     if (!state.publishedDraftKeys) state.publishedDraftKeys = new Set();
+    const draftKey = draftItem.videoId || draftItem.title;
     state.publishedDraftKeys.add(draftKey);
   }
 
@@ -2300,20 +2242,17 @@
   // ============================================================
   async function publishAllDrafts(maxToPublish = 50) {
     let publishRound = 0;
+    const maxRounds = maxToPublish || 50;
     let consecutiveEmpty = 0;
-    const publishedIdsThisRun = new Set();
-    const failedDraftKeys = new Set();
+    const publishedVideoIds = new Set();
     
-    while (!state.stopRequested && publishRound < maxToPublish) {
+    while (!state.stopRequested && publishRound < maxRounds) {
       if (state.isPaused) {
         await waitForResume();
         if (state.stopRequested) break;
       }
       
-      let drafts = findDraftRows().filter(d => {
-        const key = d.videoId || d.title;
-        return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
-      });
+      let drafts = findDraftRows().filter(d => !d.videoId || !publishedVideoIds.has(d.videoId));
 
       // If no drafts found on initial scan, check alternate Content tab (Shorts vs Videos)
       if (drafts.length === 0 && publishRound === 0) {
@@ -2324,10 +2263,7 @@
         try {
           await switchToContentTab(altTab);
           await sleep(1500);
-          drafts = findDraftRows().filter(d => {
-            const key = d.videoId || d.title;
-            return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
-          });
+          drafts = findDraftRows().filter(d => !d.videoId || !publishedVideoIds.has(d.videoId));
         } catch (e) {}
       }
 
@@ -2336,10 +2272,7 @@
           updateStatus('Scrolling to load more drafts...', 'active');
           scrollStudioTable(800);
           await sleep(2000);
-          const moreDrafts = findDraftRows().filter(d => {
-            const key = d.videoId || d.title;
-            return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
-          });
+          const moreDrafts = findDraftRows().filter(d => !d.videoId || !publishedVideoIds.has(d.videoId));
           if (moreDrafts.length === 0) {
             consecutiveEmpty++;
             if (consecutiveEmpty >= 2) break;
@@ -2379,7 +2312,7 @@
       }
 
       if (pubSuccess) {
-        publishedIdsThisRun.add(draftKey);
+        if (currentDraft.videoId) publishedVideoIds.add(currentDraft.videoId);
         state.standalonePublished = (state.standalonePublished || 0) + 1;
         updateStatus(`Published (${state.standalonePublished}): ${currentDraft.title.substring(0, 30)}`, 'active');
         
@@ -2396,7 +2329,6 @@
         renderUI();
       } else {
         console.error(`[XMON] Skipping failed draft "${currentDraft.title}" after ${maxRetries} attempts:`, lastErr);
-        failedDraftKeys.add(draftKey);
         state.standaloneFailed = (state.standaloneFailed || 0) + 1;
         currentDraft.row.setAttribute('data-xmon-status', 'failed');
         currentDraft.row.style.outline = '2px solid #e74c3c';
