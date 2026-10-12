@@ -772,6 +772,28 @@
     }
   }
 
+  // Scroll helper for YouTube Studio's internal table container
+  function scrollStudioTable(yOffset = 800) {
+    const containers = [
+      document.querySelector('#main-container'),
+      document.querySelector('ytcp-table'),
+      document.querySelector('ytcp-video-section'),
+      document.querySelector('#page-container'),
+      document.querySelector('#video-list'),
+      document.querySelector('[role="main"]'),
+      document.documentElement,
+      window
+    ];
+    for (const el of containers) {
+      if (el && typeof el.scrollBy === 'function') {
+        try {
+          el.scrollBy(0, yOffset);
+          el.dispatchEvent(new Event('scroll', { bubbles: true }));
+        } catch (e) {}
+      }
+    }
+  }
+
   // ============================================================
   // FIND DRAFT ROWS (preserved & enhanced from v1)
   // ============================================================
@@ -779,15 +801,21 @@
     const rows = deepQueryAll('ytcp-video-row');
     const drafts = [];
 
+    const draftKeywords = [
+      'draft', 'খসড়া', 'ड्राफ्ट', 'borrador', 'brouillon',
+      'entwurf', 'rascunho', 'черновик', 'draf', 'taslak',
+      'bozza', 'مسودة', 'bản nháp', '下書き', '초안', '草稿'
+    ];
+
     for (const row of rows) {
       const rowStatus = row.getAttribute('data-xmon-status');
       if (rowStatus === 'published' || rowStatus === 'failed') continue;
 
-      // Visibility cell check
-      const visCell = row.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
-        || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', row);
+      // Visibility cell check - covers class, ID, role, custom elements & badges
+      const visCell = row.querySelector('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility, ytcp-badge, [role="cell"][id*="visibility" i]')
+        || deepQuery('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility, ytcp-badge, [role="cell"][id*="visibility" i]', row);
       const visText = visCell ? (visCell.textContent || '').toLowerCase() : '';
-      const isDraftByVis = visText.includes('draft') || visText.includes('খসড়া');
+      let isDraftByVis = draftKeywords.some(kw => visText.includes(kw));
 
       // Edit draft button check
       let editDraftBtn = row.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
@@ -799,6 +827,30 @@
           const text = (b.textContent || b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('tooltip') || '').toLowerCase();
           return /edit\s*draft/i.test(text) || (text.includes('draft') && text.includes('edit')) || (text.includes('খসড়া') && text.includes('সম্পাদনা'));
         }) || null;
+      }
+
+      // If visCell didn't yield draft, check inner badges or cells in the row
+      if (!isDraftByVis && !editDraftBtn) {
+        const badgesOrCells = deepQueryAll('ytcp-badge, [role="cell"], .cell-body, span.badge', row);
+        for (const el of badgesOrCells) {
+          const t = (el.textContent || '').toLowerCase();
+          if (draftKeywords.some(kw => t.includes(kw))) {
+            isDraftByVis = true;
+            break;
+          }
+        }
+      }
+
+      // Fallback: check whole row text excluding title & reject if clearly public/unlisted/private
+      if (!isDraftByVis && !editDraftBtn) {
+        const titleEl = row.querySelector('#video-title, .video-title, #title-link, a[href*="/video/"]')
+          || deepQuery('#video-title, .video-title, #title-link, a[href*="/video/"]', row);
+        const titleText = titleEl ? titleEl.textContent.trim() : '';
+        const nonTitleText = (row.textContent || '').replace(titleText, '').toLowerCase();
+        const isPublishedState = /(public|unlisted|private|সর্বজনীন|পাবলিক|ব্যক্তিগত|না-তালিকাভুক্ত|público|publique|öffentlich)/i.test(nonTitleText);
+        if (!isPublishedState && draftKeywords.some(kw => nonTitleText.includes(kw))) {
+          isDraftByVis = true;
+        }
       }
 
       // Strictly draft only: must match visibility text or explicit edit draft button
@@ -873,11 +925,21 @@
         });
       }
 
-      // Last resort: try clicking the row itself to navigate to editor
-      if (!buttonToClick && hoverAttempt === 2) {
-        const titleLink = row.querySelector('a[href*="/video/"]');
+      // Fallback: title link, thumbnail or title element (all navigate into editor in YouTube Studio)
+      if (!buttonToClick) {
+        const titleLink = row.querySelector('a[href*="/video/"]') || deepQuery('a[href*="/video/"]', row);
         if (titleLink && isElementVisible(titleLink)) {
           buttonToClick = titleLink;
+        } else {
+          const thumb = row.querySelector('#thumbnail, ytcp-video-thumbnail') || deepQuery('#thumbnail, ytcp-video-thumbnail', row);
+          if (thumb && isElementVisible(thumb)) {
+            buttonToClick = thumb;
+          } else {
+            const titleEl = row.querySelector('#video-title, .video-title, #title-link') || deepQuery('#video-title, .video-title, #title-link', row);
+            if (titleEl && isElementVisible(titleEl)) {
+              buttonToClick = titleEl;
+            }
+          }
         }
       }
 
@@ -981,12 +1043,21 @@
         || deepQuery(`[name="${targetVisibility}"]`, dialog);
       if (r && isElementVisible(r)) return r;
 
-      // Fallback: search all radio buttons by text content
+      // Fallback: search all radio buttons by name and text content
       const allRadios = deepQueryAll('tp-yt-paper-radio-button, [role="radio"], ytcp-ve-visibility-radio-button', dialog);
-      const match = allRadios.find(el =>
-        new RegExp(`^${targetVisibility}`, 'i').test((el.textContent || '').trim()) ||
-        el.getAttribute('name') === targetVisibility
-      );
+      const isTargetPublic = targetVisibility === 'PUBLIC';
+      const isTargetUnlisted = targetVisibility === 'UNLISTED';
+      const isTargetPrivate = targetVisibility === 'PRIVATE';
+
+      const match = allRadios.find(el => {
+        const nameAttr = (el.getAttribute('name') || '').toUpperCase();
+        if (nameAttr === targetVisibility) return true;
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (isTargetPublic && (text.includes('public') || text.includes('সর্বজনীন') || text.includes('পাবলিক') || text.includes('público'))) return true;
+        if (isTargetUnlisted && (text.includes('unlisted') || text.includes('তালিকাবিহীন') || text.includes('না-তালিকাভুক্ত') || text.includes('oculto'))) return true;
+        if (isTargetPrivate && (text.includes('private') || text.includes('ব্যক্তিগত') || text.includes('privado'))) return true;
+        return false;
+      });
       return (match && isElementVisible(match)) ? match : null;
     }, 8000);
 
@@ -1001,7 +1072,7 @@
     // Step 6: Click Save/Publish/Done
     const doneBtn = await waitFor(() => {
       const btn = deepQuery('#done-button, #save-button, ytcp-button#done-button', dialog)
-        || deepQueryAll('ytcp-button, button', dialog).find(b => /^(publish|save|done)$/i.test((b.textContent || '').trim()));
+        || deepQueryAll('ytcp-button, button', dialog).find(b => /^(publish|save|done|প্রকাশ করুন|পাবলিশ|সংরক্ষণ করুন|publicar|enregistrer|guardar)$/i.test((b.textContent || '').trim()));
       return (btn && isButtonEnabled(btn)) ? btn : null;
     }, 8000);
 
@@ -1055,13 +1126,21 @@
       });
 
       if (targetRow) {
-        const visCell = targetRow.querySelector('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility')
-          || deepQuery('.cell-body.visibility, [class*="visibility"], ytcp-video-list-cell-visibility', targetRow);
-        const visText = (visCell ? visCell.textContent || '' : '').toLowerCase();
-        const hasDraftEditBtn = !!(targetRow.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
-          || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', targetRow));
-
-        if ((visText.includes('draft') || visText.includes('খসড়া')) && hasDraftEditBtn) {
+        let stillDraft = true;
+        for (let verifyPoll = 0; verifyPoll < 5; verifyPoll++) {
+          const visCellNow = targetRow.querySelector('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility')
+            || deepQuery('#visibility-cell, #visibility, [id*="visibility" i], .cell-body.visibility, [class*="visibility" i], ytcp-video-list-cell-visibility', targetRow);
+          const visNow = (visCellNow ? visCellNow.textContent || '' : '').toLowerCase();
+          const hasBtn = !!(targetRow.querySelector('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]')
+            || deepQuery('#edit-draft-button, .edit-draft-button, [test-id="edit-draft-button"]', targetRow));
+          const hasDraftText = (visNow.includes('draft') || visNow.includes('খসড়া'));
+          if (!hasDraftText || !hasBtn) {
+            stillDraft = false;
+            break;
+          }
+          await sleep(500);
+        }
+        if (stillDraft) {
           throw new Error('Publish verification failed: draft state still present after dialog close');
         }
         targetRow.setAttribute('data-xmon-status', 'published');
@@ -2231,14 +2310,31 @@
         if (state.stopRequested) break;
       }
       
-      const drafts = findDraftRows().filter(d => {
+      let drafts = findDraftRows().filter(d => {
         const key = d.videoId || d.title;
         return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
       });
 
+      // If no drafts found on initial scan, check alternate Content tab (Shorts vs Videos)
+      if (drafts.length === 0 && publishRound === 0) {
+        const isShortsUrl = window.location.href.includes('/short');
+        const altTab = isShortsUrl ? 'videos' : 'shorts';
+        updateStatus(`No drafts found on current view. Checking ${altTab} tab...`, 'active');
+        renderUI();
+        try {
+          await switchToContentTab(altTab);
+          await sleep(1500);
+          drafts = findDraftRows().filter(d => {
+            const key = d.videoId || d.title;
+            return !publishedIdsThisRun.has(key) && !failedDraftKeys.has(key);
+          });
+        } catch (e) {}
+      }
+
       if (drafts.length === 0) {
         if (state.config.autoScroll) {
-          window.scrollBy(0, 800);
+          updateStatus('Scrolling to load more drafts...', 'active');
+          scrollStudioTable(800);
           await sleep(2000);
           const moreDrafts = findDraftRows().filter(d => {
             const key = d.videoId || d.title;
@@ -2323,10 +2419,35 @@
     state.isPaused = false;
     state.standalonePublished = 0;
     state.standaloneFailed = 0;
-    
+
+    // Reset published/failed sets so past run keys do not block drafts
+    if (state.publishedDraftKeys) state.publishedDraftKeys.clear();
+    if (state.failedDraftKeys) state.failedDraftKeys.clear();
+
+    // Clear failed marks on any existing rows so user can retry them
+    try {
+      const existingRows = deepQueryAll('ytcp-video-row[data-xmon-status="failed"]');
+      existingRows.forEach(r => {
+        r.removeAttribute('data-xmon-status');
+        r.style.outline = '';
+      });
+    } catch(e) {}
+
     updateStatus('Starting draft publishing...', 'active');
     renderUI();
-    
+
+    // Ensure on Content page if on another Studio route
+    if (!window.location.href.includes('/videos')) {
+      updateStatus('Navigating to YouTube Studio Content page...', 'active');
+      renderUI();
+      try {
+        await navigateToContentSafe();
+        await sleep(2000);
+      } catch (e) {
+        console.warn('[XMON] Navigation to Content page warning:', e);
+      }
+    }
+
     try {
       await publishAllDrafts();
     } finally {
@@ -2674,9 +2795,13 @@
         <div class="xmon-body">
           <div class="xmon-section-title">Draft Publisher</div>
           
-          <div class="xmon-summary-card">
+          <div class="xmon-summary-card" style="position: relative;">
             <div class="xmon-summary-big" id="xmon-drafts-count">${draftsOnScreen}</div>
             <div class="xmon-summary-label">Drafts on Screen</div>
+            <button class="xmon-btn xmon-btn-secondary" id="xmon-scan-drafts-btn" type="button" title="Scan YouTube Studio for Drafts" style="position: absolute; right: 12px; top: 12px; padding: 4px 10px; font-size: 11px; height: auto;">
+              <span class="xmon-btn-icon">${ICONS.refresh}</span>
+              <span>Scan</span>
+            </button>
           </div>
 
           <div class="xmon-stats" style="grid-template-columns: repeat(2, 1fr);">
@@ -3060,6 +3185,34 @@
     // Standalone draft publisher
     const pubDraftsBtn = document.getElementById('xmon-publish-drafts-btn');
     if (pubDraftsBtn) pubDraftsBtn.onclick = () => runStandaloneDraftPublisher();
+
+    // Scan drafts button on Publish tab
+    const scanDraftsBtn = document.getElementById('xmon-scan-drafts-btn');
+    if (scanDraftsBtn) {
+      scanDraftsBtn.onclick = async () => {
+        scanDraftsBtn.disabled = true;
+        updateStatus('Scanning YouTube Studio for drafts...', 'active');
+        renderUI();
+        if (!window.location.href.includes('/videos')) {
+          try {
+            await navigateToContentSafe();
+            await sleep(1500);
+          } catch(e) {}
+        }
+        let cnt = findDraftRows().length;
+        if (cnt === 0) {
+          const isShorts = window.location.href.includes('/short');
+          try {
+            await switchToContentTab(isShorts ? 'videos' : 'shorts');
+            await sleep(1500);
+            cnt = findDraftRows().length;
+          } catch(e) {}
+        }
+        state._cachedDraftCount = cnt;
+        updateStatus(`Found ${cnt} draft(s) on screen.`, 'idle');
+        renderUI();
+      };
+    }
 
     // Individual retry buttons in queue
     const retryBtns = document.querySelectorAll('[data-retry-id]');
