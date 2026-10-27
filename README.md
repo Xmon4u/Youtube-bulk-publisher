@@ -1,167 +1,92 @@
-# XMON YouTube Shorts Bulk Upload & Auto Publisher
+# YouTube Shorts Bulk Publisher
 
-<p align="center">
-  <img src="xmon_logo.png" alt="XMON Logo" width="120" style="border-radius: 20px;" />
-</p>
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue.svg)](manifest.json)
+[![Platform](https://img.shields.io/badge/Platform-Chromium%20Extension-orange.svg)](https://github.com/Xmon4u/Youtube-bulk-publisher)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<p align="center">
-  <strong>Automated bulk upload and publishing tool for YouTube Shorts, built as a Chrome extension.</strong>
-</p>
-
----
+A Chromium browser extension (Manifest V3) for automating bulk video uploads and scheduled draft publishing directly inside YouTube Studio.
 
 ## Overview
 
-XMON YouTube Shorts Publisher is a Manifest V3 Chrome extension that runs inside YouTube Studio. It manages a video queue, uploads files in batches, saves them as drafts, and then automatically publishes each draft with the configured visibility setting.
+Managing large numbers of YouTube Shorts manually through the web UI is repetitive. This extension integrates a floating control panel into YouTube Studio (`studio.youtube.com`), handling batch uploads, draft saving, quota monitoring, and automatic publishing in sequence.
 
-Key capabilities:
+## Features
 
-- Queue up to 100 videos via drag-and-drop or file browser
-- Upload in configurable batches (5, 10, or 15 videos at a time)
-- Automatically detect when uploads finish and close the upload dialog
-- Navigate to the content page and publish all pending drafts after each batch
-- Detect YouTube's daily upload quota limit and pause gracefully
-- Retry failed videos individually or in bulk
-- Persist queue metadata across page refreshes via `chrome.storage.local`
-
----
+- **Queue Management**: Add up to 100 video files at once using drag-and-drop or the file picker.
+- **Configurable Batching**: Upload in groups of 5, 10, or 15 videos to prevent browser memory issues and respect YouTube Studio limits.
+- **Upload Lifecycle Detection**: Automatically detects when each file completes uploading and closes upload dialogs cleanly.
+- **Automated Draft Publishing**: Navigates to the channel Content tab and publishes each saved draft with configured visibility (Public, Unlisted, or Private).
+- **Daily Quota Handling**: Detects YouTube's 24-hour upload limits and automatically pauses remaining queue items in waiting state.
+- **State Persistence**: Saves queue state, file references, and configuration in `chrome.storage.local` to survive accidental page refreshes.
+- **Error Recovery**: Retry individual failed videos or restart batches without re-uploading completed items.
 
 ## Installation
 
-1. Clone or download this repository:
+1. Clone or download the repository:
    ```bash
    git clone https://github.com/Xmon4u/Youtube-bulk-publisher.git
    ```
 
-2. Open your Chromium-based browser (Chrome, Brave, Edge, Opera) and go to `chrome://extensions/`.
-
+2. Open your Chromium browser (Chrome, Brave, Edge, Opera) and go to `chrome://extensions/`.
 3. Enable **Developer mode** using the toggle in the top-right corner.
-
 4. Click **Load unpacked** and select the `Youtube-bulk-publisher` folder.
+5. Go to [YouTube Studio](https://studio.youtube.com). The publisher panel will load on the right side of your dashboard.
 
-5. Navigate to [YouTube Studio](https://studio.youtube.com). The XMON panel will appear on the page.
+## How to Use
 
----
+### 1. Upload & Publish Queue
+1. In the **Upload** tab, drop your video files onto the upload zone.
+2. Select your target **Batch Size** and **Visibility** setting (Public, Unlisted, or Private).
+3. Click **Start Queue**.
+4. The extension uploads the first batch, waits for drafts to save, navigates to your Content page, and publishes each draft automatically before advancing to the next batch.
 
-## Usage
+### 2. Publish Drafts Only
+If you have already uploaded videos as drafts and only want to publish them in bulk:
+1. Open the **Publish** tab.
+2. Configure your visibility preference and click **Publish All Drafts**.
 
-1. Go to the **Upload** tab and drop your video files onto the drop zone (or click to browse).
-2. Click **Start Queue**. The extension will upload the first batch to YouTube Studio.
-3. After uploads complete and drafts are saved, the extension navigates to the content page and publishes each draft automatically.
-4. Once the first batch is fully published, the next batch upload begins.
-5. This continues until all videos are processed.
+## Configuration Options
 
-If the daily upload limit is reached, the queue pauses and the remaining videos stay in **Waiting** status so you can resume the next day.
+Settings are available in the **Config** tab:
 
-To publish existing drafts without uploading, use the **Publish** tab.
-
----
-
-## Configuration
-
-Available in the **Config** tab:
-
-| Setting | Options | Default |
-|---|---|---|
-| Visibility | Public / Unlisted / Private | Public |
-| Batch size | 5 / 10 / 15 | 15 |
-| Not made for kids | On / Off | On |
-| Auto-publish drafts | On / Off | On |
-| Auto-scroll for drafts | On / Off | On |
-| Delay between videos | 0.5s – 2.0s | 0.8s |
-| Delay between batches | 2s – 10s | 3s |
-
----
+| Setting | Options | Default | Description |
+|---|---|---|---|
+| Visibility | Public / Unlisted / Private | Public | Privacy state applied when publishing |
+| Batch Size | 5 / 10 / 15 | 15 | Number of files uploaded per batch |
+| Made for Kids | Yes / No | No | Audience compliance flag |
+| Auto-Publish Drafts | Enabled / Disabled | Enabled | Automatically publish after upload finishes |
+| Auto-Scroll | Enabled / Disabled | Enabled | Scrolls content table to locate pending drafts |
+| Action Delay | 0.5s – 2.0s | 0.8s | Delay between individual UI clicks |
+| Batch Interval | 2s – 10s | 3s | Cooldown period between batches |
 
 ## Project Structure
 
-```
+```text
 Youtube-bulk-publisher/
-├── manifest.json       # Chrome Extension Manifest V3
-├── background.js       # Background service worker, state persistence
-├── content.js          # Core automation logic and floating UI
-├── styles.css          # Extension UI styles
-├── popup.html          # Toolbar popup
-├── popup.js            # Popup script
-└── icons/              # Extension icons
+├── manifest.json       # Manifest V3 configuration
+├── background.js       # Background worker and storage sync
+├── content.js          # Core automation script and floating UI
+├── styles.css          # Injected UI styles
+├── popup.html          # Browser toolbar popup
+├── popup.js            # Toolbar popup script
+├── icons/              # Extension icons
+└── README.md
 ```
-
----
 
 ## Changelog
 
-### v2.9.1 (2026-10-12)
+### v2.9.1
+- **Upload Detection**: Switched to strict per-file upload completion tracking (`ytcp-uploads-file-item` state). Dialogs remain open until all active uploads report completion.
+- **Draft Verification**: Verification window now dynamically scales with batch size (`max(60s, 8s * batchCount)` up to 180s) across both Shorts and Videos tabs.
+- **False-Positive Error Filtering**: Isolated YouTube Studio error dialog selectors to prevent filenames containing "error" or "draft" from triggering false-positive aborts.
+- **Toast De-duplication**: Suppressed duplicate toast alerts during fast polling loops.
+- **Selector Diagnostics**: Added ring-buffer debug logger and DOM selector health checks in the Config tab.
 
-Comprehensive reliability and resilience release addressing all Phase 1–5 audit findings:
-
-- **Per-Item Upload Completion Detection (P1-1)**: Replaced premature dialog-wide text matching with strict per-item tracking (`ytcp-uploads-file-item` state extraction). Dialog is never closed while files are actively uploading.
-- **Robust Per-Item Progress Matching (P1-2)**: Enhanced file title extraction from YouTube upload rows with normalized matching and word-boundary fallbacks.
-- **Adaptive Draft Verification Window & Dual-Tab Scanning (P1-3)**: Verification window scales dynamically with batch size (`max(60s, 8s * batchCount)` up to 180s) and scans both Shorts and Videos tabs on every poll. Snapshotting prevents claiming pre-existing drafts.
-- **Verified Draft Publishing Flow (P1-4)**: Eliminated premature Escape key dispatch during draft save; verifies that the draft row no longer shows Draft status before declaring success.
-- **Multi-Panel Dismiss Alert ID Fix (P2-1)**: Replaced duplicate `#xmon-dismiss-alert-btn` IDs with `.xmon-dismiss-alert-btn` class, ensuring dismiss buttons work reliably in both Upload and Queue panels.
-- **Notification De-duplication (P2-2)**: Implemented per-batch toast suppression to prevent spamming notifications during rapid 1.5s polling loops.
-- **False-Positive Error Filtering (P2-3)**: Isolated dedicated YouTube error element selectors from dialog-wide text checks so video filenames containing keywords like "error" or "already uploaded" never trigger false failure states.
-- **SPA Route Safety (P2-4)**: Replaced unsafe History `pushState` fallbacks with verified YouTube Studio SPA navigation.
-- **Queue Limits & Needs-File Clarity (P2-6)**: Upload limit calculations only count active/pending videos; restored sessions clearly indicate `needs-file` status with actionable guidance.
-- **Dialog Detection & Teardown (P2-7, P2-8)**: Enforced strict modal identity checks to reject stale background modals; queue stopping cleanly tears down open upload dialogs.
-- **CSP & Extension Optimization (P4)**: Streamlined `manifest.json` permissions, removed dead background queue messaging, and removed remote Google Fonts to comply with strict CSP rules.
-- **Live Diagnostics & Selector Health (P5)**: Integrated ring-buffer debug logger (`getDebugLog`) and automated YouTube Studio DOM selector health checks (`runSelectorHealthCheck`) directly into the Config tab.
-
-### v2.9.0 (2026-10-10)
-
-Critical bug-fix release fixing draft publishing failures ("Edit draft button not found" and "Editor dialog did not open") and upload double-injection ("You cannot upload more than 15 videos at a time"):
-
-- **Upload Double-Injection Fix**: `uploadBatchToYouTube()` previously ran Method A (native input setter) and Method B (drag/drop event) sequentially. When uploading a batch of 15 videos, both dispatched 15 files each, resulting in 30 files being sent to YouTube Studio. Method B now executes strictly as a fallback only when Method A is unavailable or fails. Additionally, `dt.files` is sliced to `Math.min(batchFiles.length, 15)`.
-- **Max Batch Limit Exceeded Auto-Recovery**: Added detection in `detectYouTubeUploadError()` for YouTube's "You cannot upload more than 15 videos at a time" error. When detected, the dialog is closed, batch size is clamped to 15, and the batch is automatically retried.
-- **Internal File Input Isolation**: Marked internal `#xmon-file-input` with `data-xmon-internal="true"` to prevent `findYouTubeUploadInput()` from selecting XMON's own file input during upload dialog detection.
-- **Edit Draft Button Retry Loop**: `publishSingleDraft()` now retries up to 3 times with increasing hover delays (500ms → 800ms → 1200ms) and dispatches both `mouseenter` and `mouseover` events before searching for the button.
-- **Extended Edit Button Selectors**: Added `[aria-label*="Edit" i]`, `ytcp-icon-button`, `[role="button"]`, three-dot menu icon selectors, and `a[href*="/video/"]` title link fallback.
-- **Scroll-Into-View Before Hover**: Each retry attempt scrolls the draft row into the viewport center before hovering, ensuring off-screen rows receive the hover event correctly.
-- **Extended Editor Dialog Selectors**: `waitFor()` dialog detection now checks `ytcp-video-metadata-editor-advanced`, `ytcp-video-editor`, and `ytcp-dialog[id*="dialog"]`. Also increased wait timeout from 12s to 15s.
-- **`isDialogOpen()` Attribute Fix**: Now correctly treats `opened=""` and `opened` (no value) as open, and only `opened="false"` as closed. Also added `getComputedStyle` CSS visibility check.
-- **Visibility Radio Button Fallbacks**: Added `[name="..."]` generic selector, `[role="radio"]`, and `ytcp-ve-visibility-radio-button` to handle YouTube Studio's evolving radio button components. Increased visibility step wait from 6s to 8s.
-- **Share Dialog Close Improvements**: Added `[aria-label="Close" i]` case-insensitive selector and Escape key dispatch to both `document` and `window`. Extended dialog close wait from 10s to 12s.
-
-### v2.8.0 (2026-10-10)
-
-Bug-fix release addressing 6 logic errors found during full code audit:
-
-- **`deepQuery` Shadow DOM Traversal Fix**: The descendant-selector parsing in `deepQuery()` previously tried to apply shadow-boundary traversal for multi-level descendant paths, causing incorrect element resolution. Now only simple `"parent child"` pairs receive shadow traversal; deeper paths are delegated to native `querySelector`.
-- **`verifyAndSyncBatchDrafts` Wrong Tab Navigation**: The `initialTab` calculation always resolved to `'shorts'` regardless of the current URL. Now correctly switches to `'shorts'` when on a Shorts URL and `'videos'` otherwise.
-- **`closeUploadDialog` Confirmation Safety**: The safe/destructive button detection logic was applied in the wrong order. Reordered so destructive check always runs first; added `'keep'` and `'delete'` patterns.
-- **Toast Special-Character Encoding**: The daily-limit toast displayed a mojibake bullet character due to a raw UTF-8 byte sequence in the template literal. Replaced with the Unicode escape `\u2022` for correct rendering.
-- **`startPeriodicUpdates` Interval Leak**: Calling `init()` more than once during SPA navigation stacked multiple `setInterval` timers. Both intervals are now tracked and cleared before being re-created.
-- **`handleFileDrop` Batch Count**: Clarified the intent of `totalBatches` calculation and ensured consistency with `processQueue`.
-- **`background.js` Broken `OPEN_STUDIO` URL**: The `OPEN_STUDIO` message handler opened a URL with a placeholder channel ID (`/UC/`) that resulted in a 404. Changed to `https://studio.youtube.com`.
-
-### v2.7.0 (2026-10-09)
-
-Fixed multi-batch queue stall after first batch and implemented persistent panel minimize/maximize state:
-
-- **Batch Stall Root Cause Fixed**: In `waitForBatchUploadComplete()`, the extension waited for up to 6.25 minutes looking only for dialog text flags while YouTube Studio had already transitioned the batch to drafts. This caused the first 15 videos to remain stuck in `UPLOADING` state, preventing transition to Batch 2.
-- **Direct Content Draft Detection**: Active polling of `findDraftRows()` now verifies drafts directly in YouTube Studio; as soon as batch drafts are saved, the loop terminates and advances to publishing.
-- **Upload Dialog Disappearance Fast-Path**: If YouTube Studio closes the multi-upload modal automatically, the extension detects this immediately.
-- **Batch 2+ Transition Stability**: Clean sequential batch chaining across up to 100 queued videos (15 per batch).
-- **Minimize / Maximize State Persistence**: Clicking the minus button minimizes the floating widget. State is saved to `localStorage` and `chrome.storage.local`, persisting through page refreshes, tab switching, and extension reloads.
-
-### v2.2.0 (2026-10-09)
-
-Fixed a critical bug where the extension would freeze after the first batch completed:
-
-- **Root cause**: `navigateToContent()` was using `window.location.href` assignment, which causes a full page reload and destroys all JavaScript state. After the first batch uploaded, the page reloaded and the loop never continued.
-- **Fix**: Replaced direct URL assignment with SPA-safe navigation using sidebar link clicks and the History API (`pushState`).
-- Improved upload completion detection: added `isUploadCloseBtnEnabled()` to check both the element and its inner shadow DOM button for disabled state.
-- Fixed double-counting of `publishedCount`: incremented in both `publishSingleDraft()` and `publishAllDrafts()`. Now only incremented inside `publishSingleDraft()`.
-- Added per-index tracking (`updatedIndices` set) in `waitForBatchUploadComplete()` to prevent the same video from being counted as uploaded multiple times.
-- After a timeout, remaining `UPLOADING` videos in the batch are now marked as `UPLOADED` (fallback) rather than left stuck.
-- Increased upload wait timeout from 90 seconds per video to 180 seconds to accommodate larger file sizes.
-
-### v2.1.0
-
-Initial public release with queue management, batch uploads, draft publishing, and daily limit detection.
-
----
+### v2.9.0
+- **Upload Fallback Isolation**: Ensured input setter and drag/drop fallback methods execute mutually exclusively, preventing accidental double-uploading of batch files.
+- **Batch Limit Exceeded Recovery**: Added automated handling for YouTube's 15-file upload limit error with automatic dialog reset and retry.
+- **Draft Editor Selectors**: Improved selectors and added hover retry routines for locating the edit button on modern YouTube Studio table rows.
 
 ## License
 
-MIT License. Use in accordance with [YouTube Terms of Service](https://www.youtube.com/t/terms).
+This project is licensed under the MIT License.
